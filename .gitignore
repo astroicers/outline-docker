@@ -1,0 +1,26 @@
+# 敏感檔案
+.env
+
+# 資料目錄
+data/
+
+# SSL 憑證
+nginx/certs/
+
+# Let's Encrypt 驗證目錄
+nginx/www/
+
+# 備份檔案
+*.sql
+*.backup
+
+# Claude Code 本地設定
+.claude/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
