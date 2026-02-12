@@ -10,9 +10,13 @@ nginx/certs/
 # Let's Encrypt 驗證目錄
 nginx/www/
 
+# 執行時生成的設定檔
+nginx/conf.d/outline.conf.ssl
+nginx/conf.d/outline-temp.conf
+
 # 備份檔案
-*.sql
 *.backup
+*-backup.sql
 
 # Claude Code 本地設定
 .claude/

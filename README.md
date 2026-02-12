@@ -37,7 +37,7 @@ cd outline-docker
 ### 2. 執行安裝腳本
 
 ```bash
-./setup.sh
+./scripts/setup.sh
 ```
 
 腳本會請你輸入：
@@ -177,16 +177,19 @@ outline-docker/
 ├── docker-compose.yml        # 服務定義
 ├── .env                      # 環境變數（敏感）
 ├── .env.example              # 環境變數範例
-├── setup.sh                  # 安裝腳本
-├── init-keycloak-db.sql      # Keycloak 資料庫初始化
+├── scripts/
+│   ├── setup.sh              # 安裝腳本
+│   └── init-keycloak-db.sql  # Keycloak 資料庫初始化
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
 │   └── outline-realm.json    # Keycloak Realm 設定
 └── nginx/
+    ├── templates/            # Nginx 設定模板
+    │   ├── outline.conf.template
+    │   └── outline-temp.conf.template
+    ├── conf.d/               # 執行時設定（由 setup.sh 生成）
+    │   └── outline.conf
     ├── certs/                # SSL 憑證
-    ├── conf.d/
-    │   ├── outline.conf      # Nginx 設定
-    │   └── outline.conf.ssl  # SSL 設定範本
     └── www/                  # Let's Encrypt 驗證
 ```
 
