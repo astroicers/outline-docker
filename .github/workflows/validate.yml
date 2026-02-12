@@ -1,0 +1,58 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck yamllint jq
+
+      - name: Run ShellCheck
+        run: shellcheck scripts/*.sh
+
+      - name: Validate YAML
+        run: yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml
+
+      - name: Validate JSON (if exists)
+        run: |
+          if [ -f keycloak/outline-realm.json ]; then
+            jq empty keycloak/outline-realm.json
+          fi
+
+      - name: Validate Docker Compose
+        run: |
+          # 使用 .env.example 作為驗證用的環境變數
+          cp .env.example .env
+          docker compose config > /dev/null
+          rm .env
+
+      - name: Check required files
+        run: |
+          files=(
+            "docker-compose.yml"
+            ".env.example"
+            "scripts/setup.sh"
+            "scripts/init-keycloak-db.sql"
+            "nginx/templates/outline.conf.template"
+            "nginx/templates/outline-temp.conf.template"
+            "README.md"
+          )
+          for file in "${files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Missing required file: $file"
+              exit 1
+            fi
+          done
+          echo "All required files present"

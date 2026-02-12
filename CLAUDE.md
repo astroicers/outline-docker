@@ -35,19 +35,19 @@ Internet → Nginx (80/443)
 ## Common Commands
 
 ```bash
-# Service management
+# 使用 Makefile (推薦)
+make help             # 查看所有指令
+make validate         # 執行驗證 (推版前必跑)
+make up               # 啟動所有服務
+make down             # 停止服務
+make logs             # 查看日誌
+make backup           # 備份資料庫
+
+# 或直接使用 docker compose
 docker compose up -d                    # Start all services
 docker compose down                     # Stop services
 docker compose logs -f [service]        # View logs
 docker compose restart [service]        # Restart service
-
-# Database
-docker compose exec postgres psql -U outline              # Outline DB
-docker compose exec postgres psql -U outline keycloak     # Keycloak DB
-
-# Backup
-docker compose exec postgres pg_dump -U outline outline > outline-backup.sql
-docker compose exec postgres pg_dump -U outline keycloak > keycloak-backup.sql
 ```
 
 ## Setup Flow
@@ -66,3 +66,26 @@ docker compose exec postgres pg_dump -U outline keycloak > keycloak-backup.sql
 - WebSocket support configured for real-time collaboration
 - Rate limiting: 1000 requests per 60 seconds
 - Max upload size: 256MB
+
+## Development Workflow (SDD)
+
+1. **撰寫規格**: `make new-spec` 建立規格文件到 `docs/specs/`
+2. **規格審核**: PR review 或自行確認
+3. **實作變更**: 根據規格修改程式碼
+4. **執行驗證**: `make validate` (推版前必跑)
+5. **提交 PR**: CI 自動執行驗證
+6. **合併**: 驗證通過後合併
+
+## Testing
+
+```bash
+make validate         # 執行所有驗證
+make validate-quick   # 快速驗證 (不需 Docker)
+```
+
+驗證項目：
+- ShellCheck: Shell 腳本語法檢查
+- yamllint: YAML 格式驗證
+- jq: JSON 格式驗證
+- Docker Compose: 設定驗證
+- 必要檔案檢查

@@ -1,0 +1,12 @@
+# ShellCheck 設定檔
+# https://www.shellcheck.net/wiki/
+
+# 使用 bash
+shell=bash
+
+# 排除特定警告
+# SC2034: 變數已賦值但未使用 (setup.sh 中的環境變數是給 heredoc 用的)
+disable=SC2034
+
+# 嚴格模式
+enable=all
