@@ -11,6 +11,7 @@ nginx/certs/
 nginx/www/
 
 # 執行時生成的設定檔
+nginx/conf.d/outline.conf
 nginx/conf.d/outline.conf.ssl
 nginx/conf.d/outline-temp.conf
 
