@@ -2,8 +2,9 @@ services:
   outline:
     image: outlinewiki/outline:1.4
     env_file: .env
-    ports:
-      - "127.0.0.1:3000:3000"
+    # Port 3000 is only accessed via nginx reverse proxy (no host binding needed)
+    expose:
+      - "3000"
     volumes:
       - ./data:/var/lib/outline/data
     depends_on:
