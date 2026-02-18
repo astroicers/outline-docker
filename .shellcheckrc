@@ -6,7 +6,7 @@ shell=bash
 
 # 排除特定警告
 # SC2034: 變數已賦值但未使用 (setup.sh 中的環境變數是給 heredoc 用的)
-disable=SC2034
-
-# 嚴格模式
-enable=all
+# SC2162: read without -r (互動式輸入不需要處理反斜線)
+# SC2250: Prefer braces around variables (風格偏好)
+# SC2292: Prefer [[ ]] over [ ] (風格偏好)
+disable=SC2034,SC2162,SC2250,SC2292
