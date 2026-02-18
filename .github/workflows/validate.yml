@@ -23,7 +23,7 @@ jobs:
         run: shellcheck scripts/*.sh
 
       - name: Validate YAML
-        run: yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml
+        run: 'yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml'
 
       - name: Validate JSON (if exists)
         run: |
@@ -56,3 +56,24 @@ jobs:
             fi
           done
           echo "All required files present"
+
+      - name: Check for committed secrets
+        run: |
+          for file in .env .env.local .env.backup; do
+            if git ls-files --error-unmatch "$file" 2>/dev/null; then
+              echo "ERROR: $file should not be committed"
+              exit 1
+            fi
+          done
+          echo "No secrets committed"
+
+      - name: Validate Nginx templates
+        run: |
+          for template in nginx/templates/*.template; do
+            echo "Checking $template..."
+            grep -q "server {" "$template" || {
+              echo "ERROR: Missing server block in $template"
+              exit 1
+            }
+          done
+          echo "Nginx templates valid"
