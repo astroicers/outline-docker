@@ -63,9 +63,22 @@ services:
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/letsencrypt:ro
-      - ./nginx/www:/var/www/certbot:ro
+      - ./nginx/www:/var/www/certbot
     depends_on:
       - outline
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    entrypoint: /bin/sh -c "apk add --no-cache curl -q && trap exit TERM; while :; do certbot renew --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh; sleep 12h & wait $${!}; done"
+    volumes:
+      - ./nginx/certs:/etc/letsencrypt
+      - ./nginx/www:/var/www/certbot
+      - ./scripts/deploy-hook.sh:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/ubuntu/outline-docker/docker-compose.yml:/outline-docker/docker-compose.yml:ro
+    depends_on:
+      - nginx
     restart: unless-stopped
 
 volumes:
