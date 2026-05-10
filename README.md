@@ -164,11 +164,7 @@ docker run --rm \
 docker compose exec nginx nginx -s reload
 ```
 
-建議設定 crontab 自動更新：
-
-```bash
-0 0 1 * * cd /path/to/outline-docker && docker run --rm -v $(pwd)/nginx/certs:/etc/letsencrypt -v $(pwd)/nginx/www:/var/www/certbot certbot/certbot renew && docker compose exec nginx nginx -s reload
-```
+**自動更新**（待實作）：計劃改用 Docker service 方式定期自動更新，取代 crontab 方案。詳見 [`docs/plans/2026-05-10-certbot-auto-renew.md`](docs/plans/2026-05-10-certbot-auto-renew.md)。
 
 ## 目錄結構
 
@@ -177,20 +173,30 @@ outline-docker/
 ├── docker-compose.yml        # 服務定義
 ├── .env                      # 環境變數（敏感）
 ├── .env.example              # 環境變數範例
+├── .ai_profile               # AI 助手專案設定檔
+├── Makefile                  # 常用指令集
 ├── scripts/
 │   ├── setup.sh              # 安裝腳本
+│   ├── validate.sh           # 驗證腳本（CI 與本機共用）
 │   └── init-keycloak-db.sql  # Keycloak 資料庫初始化
+├── docs/
+│   ├── adr/                  # 架構決策記錄（ADR）
+│   ├── specs/                # 功能規格文件（SDD）
+│   └── plans/                # 實作計劃文件
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
 │   └── outline-realm.json    # Keycloak Realm 設定
-└── nginx/
-    ├── templates/            # Nginx 設定模板
-    │   ├── outline.conf.template
-    │   └── outline-temp.conf.template
-    ├── conf.d/               # 執行時設定（由 setup.sh 生成）
-    │   └── outline.conf
-    ├── certs/                # SSL 憑證
-    └── www/                  # Let's Encrypt 驗證
+├── nginx/
+│   ├── templates/            # Nginx 設定模板
+│   │   ├── outline.conf.template
+│   │   └── outline-temp.conf.template
+│   ├── conf.d/               # 執行時設定（由 setup.sh 生成）
+│   │   └── outline.conf
+│   ├── certs/                # SSL 憑證
+│   └── www/                  # Let's Encrypt 驗證
+└── .github/
+    └── workflows/
+        └── validate.yml      # CI 驗證工作流程
 ```
 
 ## 故障排除
