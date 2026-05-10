@@ -56,7 +56,7 @@
 | Nginx | alpine | `nginx:alpine` |
 | PostgreSQL | 15 | `postgres:15` |
 | Redis | 7 | `redis:7` |
-| Certbot | latest | `certbot/certbot` |
+| Certbot | latest | `certbot/certbot`（一次性 CLI 工具，非 compose service） |
 
 架構：Internet → Nginx (80/443) → Outline (3000) / Keycloak (8080) → PostgreSQL + Redis
 
@@ -68,7 +68,7 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
 
 **正面影響：**
 - 完整掌控用戶帳號：所有帳號建立、停用、權限設定均在 Keycloak 管理，不依賴外部服務。
-- 自動化 SSL：certbot webroot 模式搭配 cron，憑證到期前自動續期。
+- 自動化 SSL：certbot webroot 模式取得憑證，自動續期方案待實作（見 docs/plans/2026-05-10-certbot-auto-renew.md）。
 - 容器隔離：各服務以 Docker network 隔離，僅 Nginx 暴露 80/443，降低攻擊面。
 - 輕量反向代理：Nginx alpine image 約 20MB，資源佔用極低。
 
@@ -79,10 +79,10 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
 - PostgreSQL 共用單一 instance，若一個服務的查詢壓力過大可能影響另一個服務。
 
 **後續追蹤：**
-- [ ] 設定 certbot 自動續期 cron job（`0 3 * * * certbot renew --quiet`）
+- [ ] 實作 certbot 自動更新 Docker service（見 docs/plans/2026-05-10-certbot-auto-renew.md）
 - [ ] 設定 PostgreSQL 備份排程（`make backup` 或 pg_dump cron）
 - [ ] 監控 Keycloak 記憶體使用，超過 1GB 時評估是否需要升級 VPS
-- [ ] 評估 Keycloak Realm 設定版本控制（outline-realm.json 納入 git）
+- [x] Keycloak Realm 設定已納入 git（outline-realm.json）
 
 ---
 
