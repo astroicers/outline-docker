@@ -175,14 +175,18 @@ outline-docker/
 ├── .env.example              # 環境變數範例
 ├── .ai_profile               # AI 助手專案設定檔
 ├── Makefile                  # 常用指令集
+├── setup.sh                  # 互動式設定腳本（scripts/setup.sh 的捷徑）
 ├── scripts/
 │   ├── setup.sh              # 安裝腳本
 │   ├── validate.sh           # 驗證腳本（CI 與本機共用）
 │   └── init-keycloak-db.sql  # Keycloak 資料庫初始化
 ├── docs/
 │   ├── adr/                  # 架構決策記錄（ADR）
+│   │   └── ADR-001-initial-technology-stack.md  # 初始技術棧選型決策
 │   ├── specs/                # 功能規格文件（SDD）
+│   │   └── 2026-05-10-certbot-auto-renewal.md   # certbot 自動更新規格
 │   └── plans/                # 實作計劃文件
+│       └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
 │   └── outline-realm.json    # Keycloak Realm 設定
