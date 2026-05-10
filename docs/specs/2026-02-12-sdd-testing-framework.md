@@ -80,6 +80,21 @@ outline-docker/
 2. 提交 PR 確認 GitHub Actions 正常執行
 3. 故意引入錯誤確認驗證能捕捉
 
+## Done When（驗收條件）
+
+以下條件全部為二元可驗證，標記 ✅ 表示已通過（功能已實作）。
+
+| # | 驗收條件 | 驗證指令 | 狀態 |
+|---|---------|---------|------|
+| 1 | `make validate` 執行後 exit code 為 0，所有驗證通過 | `make validate; echo $?` | ✅ |
+| 2 | `make validate-quick` 可執行且在 30 秒內完成 | `time make validate-quick` | ✅ |
+| 3 | `.github/workflows/validate.yml` 存在，且 CI 設定在 PR 及 Push 到 main 時自動觸發 | `cat .github/workflows/validate.yml` | ✅ |
+| 4 | 故意在 `docker-compose.yml` 引入 YAML 語法錯誤後，`make validate` 回傳 exit code 非 0 | 手動引入錯誤並執行 `make validate; echo $?` | ✅ |
+| 5 | `make new-spec` 可執行，並在 `docs/specs/` 下建立以當日日期為前綴的新規格文件 | `make new-spec` | ✅ |
+| 6 | `scripts/validate.sh` 存在且可執行（有 execute 權限） | `test -x scripts/validate.sh && echo ok` | ✅ |
+| 7 | CI 工作流程包含 ShellCheck、yamllint、jq、Docker Compose config、必要檔案檢查、secrets 檢查、Nginx 模板驗證等共 7 個步驟 | `grep -c "name:" .github/workflows/validate.yml` | ✅ |
+| 8 | `docs/specs/` 目錄存在，且有規格範本 `docs/specs/TEMPLATE.md` | `ls docs/specs/TEMPLATE.md` | ✅ |
+
 ## 風險
 
 - 驗證工具需要在本機和 CI 都能執行
