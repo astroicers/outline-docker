@@ -26,6 +26,10 @@ help:
 	@echo "  make db-shell       進入 PostgreSQL shell"
 	@echo "  make backup         備份資料庫"
 	@echo ""
+	@echo "SSL 憑證:"
+	@echo "  make cert-renew     強制更新 SSL 憑證"
+	@echo "  make cert-status    查看憑證狀態"
+	@echo ""
 	@echo "開發:"
 	@echo "  make new-spec       建立新的規格文件"
 
@@ -87,6 +91,20 @@ backup:
 	@echo "備份 Keycloak 資料庫..."
 	@docker compose exec postgres pg_dump -U outline keycloak > keycloak-backup.sql
 	@echo "備份完成: outline-backup.sql, keycloak-backup.sql"
+
+# ============================================
+# 開發
+# ============================================
+
+# ============================================
+# SSL 憑證
+# ============================================
+
+cert-renew:
+	docker compose exec certbot certbot renew --force-renewal
+
+cert-status:
+	docker compose exec certbot certbot certificates
 
 # ============================================
 # 開發
