@@ -34,7 +34,7 @@ Let's Encrypt 憑證有效期為 90 天。目前憑證（`wiki.astroicers.link`�
 # docker-compose.yml 新增 certbot service
 certbot:
   image: certbot/certbot
-  entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh; sleep 12h & wait ${!}; done"
+  entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh; sleep 12h & wait $${!}; done"
   volumes:
     - ./nginx/certs:/etc/letsencrypt
     - ./nginx/www:/var/www/certbot
