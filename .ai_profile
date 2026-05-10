@@ -1,0 +1,12 @@
+type: system
+level: 1
+mode: auto
+workflow: standard
+hitl: standard
+rag: disabled
+guardrail: disabled
+autonomous: disabled
+orchestrator: disabled
+autopilot: disabled
+coding_style: disabled
+name: outline-docker

@@ -29,3 +29,9 @@ nginx/conf.d/outline-temp.conf
 .idea/
 .vscode/
 *.swp
+.asp-session-briefing.json
+.asp-audit-baseline.json
+.asp-bypass-log.ndjson
+.asp-telemetry.jsonl
+.asp-fact-check.md
+.asp-review-calibration.jsonl
