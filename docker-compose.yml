@@ -76,7 +76,6 @@ services:
       - ./nginx/www:/var/www/certbot
       - ./scripts/deploy-hook.sh:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /home/ubuntu/outline-docker/docker-compose.yml:/outline-docker/docker-compose.yml:ro
     depends_on:
       - nginx
     restart: unless-stopped
