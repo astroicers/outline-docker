@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-# 切換到專案根目錄（支援從任何位置執行）
-cd "$(dirname "$0")/.."
+# 切換到專案根目錄。必須用 readlink -f：根目錄的 setup.sh 是指向本檔的 symlink，
+# 而 bash 不解析 $0 的 symlink——不這樣寫的話 `./setup.sh` 會 cd 到專案的「上一層」，
+# 把含全部密鑰的 .env 寫到那裡去。
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
 
 echo "=== Outline Wiki + Keycloak 快速部署腳本 ==="
 echo ""
@@ -13,15 +15,52 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+if ! command -v jq &> /dev/null; then
+    echo "錯誤：請先安裝 jq（用於安全地產生 Keycloak realm 設定）"
+    exit 1
+fi
+
+# 這四個由下面的 require_* 以 printf -v 間接賦值，先宣告讓 shellcheck 追得到
+WIKI_DOMAIN=""
+AUTH_DOMAIN=""
+EMAIL=""
+USER1_EMAIL=""
+
+# 輸入驗證：空值或格式錯誤會靜默產生壞掉的設定，所以在這裡擋住
+require_domain() {
+    # $1=提示字串 $2=變數名
+    local value
+    while :; do
+        read -p "$1" value
+        if printf '%s' "$value" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$'; then
+            printf -v "$2" '%s' "$value"
+            return
+        fi
+        echo "  請輸入合法網域（例如 wiki.example.com），不要帶 https:// 或路徑"
+    done
+}
+
+require_email() {
+    local value
+    while :; do
+        read -p "$1" value
+        if printf '%s' "$value" | grep -qE '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'; then
+            printf -v "$2" '%s' "$value"
+            return
+        fi
+        echo "  請輸入合法 Email"
+    done
+}
+
 # 輸入網域
-read -p "請輸入 Outline Wiki 網域 (例如 wiki.example.com): " WIKI_DOMAIN
-read -p "請輸入 Keycloak 網域 (例如 auth.example.com): " AUTH_DOMAIN
-read -p "請輸入你的 Email (用於 SSL 憑證): " EMAIL
+require_domain "請輸入 Outline Wiki 網域 (例如 wiki.example.com): " WIKI_DOMAIN
+require_domain "請輸入 Keycloak 網域 (例如 auth.example.com): " AUTH_DOMAIN
+require_email  "請輸入你的 Email (用於 SSL 憑證): " EMAIL
 
 # 輸入用戶資訊
 echo ""
 echo "=== Keycloak 用戶設定 ==="
-read -p "請輸入第一個用戶的 Email: " USER1_EMAIL
+require_email "請輸入第一個用戶的 Email: " USER1_EMAIL
 read -p "請輸入第一個用戶的名稱: " USER1_NAME
 read -p "請輸入第二個用戶的 Email (留空跳過): " USER2_EMAIL
 if [ -n "$USER2_EMAIL" ]; then
@@ -36,7 +75,10 @@ UTILS_SECRET=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -hex 32)
 OIDC_CLIENT_SECRET=$(openssl rand -hex 32)
-USER_TEMP_PASSWORD="changeme123"
+# 每位使用者各自一組隨機初始密碼。原本這裡是硬編碼常數，而它會進公開版控——
+# 等於「已知 email + 已知密碼」，攻擊者可搶在本人之前登入並改掉密碼。
+USER1_TEMP_PASSWORD=$(openssl rand -base64 12)
+USER2_TEMP_PASSWORD=$(openssl rand -base64 12)
 
 # 建立 .env
 echo "正在建立 .env 設定檔..."
@@ -66,6 +108,10 @@ FILE_STORAGE_UPLOAD_MAX_SIZE=262144000
 # Keycloak Admin
 KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
 
+# Keycloak 使用者初始密碼（首次登入須更改）
+USER1_TEMP_PASSWORD=${USER1_TEMP_PASSWORD}
+USER2_TEMP_PASSWORD=${USER2_TEMP_PASSWORD}
+
 # OIDC (Keycloak)
 OIDC_CLIENT_ID=outline
 OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
@@ -90,83 +136,63 @@ WEB_CONCURRENCY=1
 LOG_LEVEL=info
 EOF
 
-# 更新 Nginx 設定
-echo "正在更新 Nginx 設定..."
-cp nginx/templates/outline.conf.template nginx/conf.d/outline.conf.ssl
-cp nginx/templates/outline-temp.conf.template nginx/conf.d/outline-temp.conf
-sed -i "s/WIKI_DOMAIN/${WIKI_DOMAIN}/g" nginx/conf.d/outline.conf.ssl
-sed -i "s/AUTH_DOMAIN/${AUTH_DOMAIN}/g" nginx/conf.d/outline.conf.ssl
-sed -i "s/WIKI_DOMAIN/${WIKI_DOMAIN}/g" nginx/conf.d/outline-temp.conf
-sed -i "s/AUTH_DOMAIN/${AUTH_DOMAIN}/g" nginx/conf.d/outline-temp.conf
+# .env 含全部密鑰，不可沿用預設 umask（通常是 644，同機他人可讀）
+chmod 600 .env
 
-# 更新 Keycloak Realm JSON
-echo "正在建立 Keycloak 用戶設定..."
-cat > keycloak/import/outline-realm.json << EOF
-{
-  "realm": "outline",
-  "enabled": true,
-  "sslRequired": "external",
-  "registrationAllowed": false,
-  "loginWithEmailAllowed": true,
-  "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": true,
-  "editUsernameAllowed": false,
-  "bruteForceProtected": true,
-  "clients": [
-    {
-      "clientId": "outline",
-      "enabled": true,
-      "protocol": "openid-connect",
-      "publicClient": false,
-      "secret": "${OIDC_CLIENT_SECRET}",
-      "redirectUris": ["https://${WIKI_DOMAIN}/*"],
-      "webOrigins": ["https://${WIKI_DOMAIN}"],
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "authorizationServicesEnabled": false,
-      "fullScopeAllowed": true,
-      "defaultClientScopes": ["web-origins", "acr", "profile", "email"]
-    }
-  ],
-  "users": [
-    {
-      "username": "${USER1_EMAIL}",
-      "email": "${USER1_EMAIL}",
-      "emailVerified": true,
-      "enabled": true,
-      "firstName": "${USER1_NAME}",
-      "lastName": "",
-      "credentials": [{"type": "password", "value": "${USER_TEMP_PASSWORD}", "temporary": true}]
-    }
-EOF
-
-if [ -n "$USER2_EMAIL" ]; then
-cat >> keycloak/import/outline-realm.json << EOF
-    ,{
-      "username": "${USER2_EMAIL}",
-      "email": "${USER2_EMAIL}",
-      "emailVerified": true,
-      "enabled": true,
-      "firstName": "${USER2_NAME}",
-      "lastName": "",
-      "credentials": [{"type": "password", "value": "${USER_TEMP_PASSWORD}", "temporary": true}]
-    }
-EOF
-fi
-
-cat >> keycloak/import/outline-realm.json << EOF
-  ]
-}
-EOF
-
-# 建立必要目錄
+# 先建立目錄，後面的 cp 才有地方放（原本 mkdir 在這之後，順序是錯的）
 echo "正在建立目錄..."
 mkdir -p data nginx/certs nginx/www nginx/conf.d
-chmod 777 data
 
-# 使用臨時 Nginx 設定
-cp nginx/conf.d/outline-temp.conf nginx/conf.d/outline.conf
+# 更新 Nginx 設定
+# 注意 temp 檔刻意用 .tmpl 而非 .conf 副檔名：nginx 載入的是 conf.d/*.conf，
+# 若 temp 檔也叫 .conf，切換到 SSL 設定後它會一起被載入，且 glob 排序在 outline.conf
+# 之前（'-' < '.'），導致 80 埠一直回「Waiting for SSL certificate...」而不是 301。
+echo "正在更新 Nginx 設定..."
+cp nginx/templates/outline.conf.template nginx/conf.d/outline.conf.ssl
+cp nginx/templates/outline-temp.conf.template nginx/conf.d/outline-temp.conf.tmpl
+sed -i "s/WIKI_DOMAIN/${WIKI_DOMAIN}/g" nginx/conf.d/outline.conf.ssl
+sed -i "s/AUTH_DOMAIN/${AUTH_DOMAIN}/g" nginx/conf.d/outline.conf.ssl
+sed -i "s/WIKI_DOMAIN/${WIKI_DOMAIN}/g" nginx/conf.d/outline-temp.conf.tmpl
+sed -i "s/AUTH_DOMAIN/${AUTH_DOMAIN}/g" nginx/conf.d/outline-temp.conf.tmpl
+
+# 產生 Keycloak Realm 設定
+# 用 jq 從範本填值，不用字串內插：使用者姓名若含 " 或 \ 會破壞 JSON，
+# 導致 Keycloak 啟動時匯入失敗。產物含真實 client secret，故 .gitignore 已排除 *.json。
+echo "正在建立 Keycloak 用戶設定..."
+
+user_entry() {
+    jq -n --arg e "$1" --arg n "$2" --arg p "$3" \
+        '{username:$e, email:$e, emailVerified:true, enabled:true,
+          firstName:$n, lastName:"",
+          credentials:[{type:"password", value:$p, temporary:true}]}'
+}
+
+USERS_JSON=$(user_entry "$USER1_EMAIL" "$USER1_NAME" "$USER1_TEMP_PASSWORD" | jq -s '.')
+if [ -n "$USER2_EMAIL" ]; then
+    USERS_JSON=$(printf '%s' "$USERS_JSON" \
+        | jq --argjson u "$(user_entry "$USER2_EMAIL" "$USER2_NAME" "$USER2_TEMP_PASSWORD")" '. + [$u]')
+fi
+
+jq --arg secret "$OIDC_CLIENT_SECRET" \
+   --arg wiki "https://${WIKI_DOMAIN}" \
+   --argjson users "$USERS_JSON" \
+   '.clients[0].secret = $secret
+    | .clients[0].redirectUris = [$wiki + "/*"]
+    | .clients[0].webOrigins = [$wiki]
+    | .users = $users' \
+   keycloak/import/outline-realm.json.template > keycloak/import/outline-realm.json
+chmod 600 keycloak/import/outline-realm.json
+
+# Outline 容器以 uid 1001 執行，需要的只是該 uid 可寫，不是全世界可寫。
+# 沒有 root 權限時退回 777 並提醒——但那會讓主機上任何使用者都能讀寫使用者上傳的附件。
+if ! chown -R 1001:1001 data 2>/dev/null; then
+    chmod 777 data
+    echo "  注意：無法 chown data/（需要 sudo），已退回 chmod 777。"
+    echo "  建議事後執行：sudo chown -R 1001:1001 data && chmod 755 data"
+fi
+
+# 先用臨時的 HTTP-only 設定，讓 certbot 能走 webroot 驗證
+cp nginx/conf.d/outline-temp.conf.tmpl nginx/conf.d/outline.conf
 
 echo ""
 echo "=== 設定完成！==="
@@ -179,9 +205,10 @@ echo "   - ${AUTH_DOMAIN}"
 echo ""
 echo "2. 確保路由器/防火牆開啟 port 80 和 443"
 echo ""
-echo "3. 啟動服務並取得 SSL 憑證："
+echo "3. 啟動基礎服務："
 echo "   docker compose up -d postgres redis nginx"
-echo "   docker compose exec postgres createdb -U outline keycloak"
+echo "   （keycloak 資料庫由 scripts/initdb/init-keycloak-db.sql 在 postgres 首次初始化時自動建立，"
+echo "     不需要手動 createdb）"
 echo ""
 echo "4. 取得 SSL 憑證："
 echo "   docker run --rm \\"
@@ -204,8 +231,9 @@ echo "Outline Wiki: https://${WIKI_DOMAIN}"
 echo ""
 echo "Keycloak 管理後台: https://${AUTH_DOMAIN}/admin"
 echo "  帳號: admin"
-echo "  密碼: ${KEYCLOAK_ADMIN_PASSWORD}"
 echo ""
-echo "用戶登入密碼 (首次登入需更改): ${USER_TEMP_PASSWORD}"
+echo "密碼不在此輸出（避免留在終端 scrollback 與終端機日誌中），請從 .env 取得："
+echo "  Keycloak admin：  grep KEYCLOAK_ADMIN_PASSWORD .env"
+echo "  使用者初始密碼：  grep USER._TEMP_PASSWORD .env"
 echo ""
-echo "請妥善保存以上資訊！"
+echo ".env 權限已設為 600。請妥善保管，並在首次登入後立即更改密碼。"

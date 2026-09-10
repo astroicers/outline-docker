@@ -46,7 +46,7 @@ validate-quick:
 	@echo "快速驗證 (不需要 Docker)..."
 	@command -v shellcheck > /dev/null && shellcheck scripts/*.sh || echo "shellcheck 未安裝，跳過"
 	@command -v yamllint > /dev/null && yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml || echo "yamllint 未安裝，跳過"
-	@command -v jq > /dev/null && [ -f keycloak/import/outline-realm.json ] && jq empty keycloak/import/outline-realm.json || true
+	@command -v jq > /dev/null && [ -f keycloak/import/outline-realm.json.template ] && jq empty keycloak/import/outline-realm.json.template || true
 	@echo "快速驗證完成"
 
 # ============================================

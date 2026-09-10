@@ -2,7 +2,8 @@
 set -e
 
 # 切換到專案根目錄
-cd "$(dirname "$0")/.."
+# readlink -f：若日後有 symlink 指向本檔，$0 不解析 symlink 會 cd 錯地方
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
 
 # 顏色定義
 RED='\033[0;31m'
@@ -83,7 +84,17 @@ fi
 print_header "3. JSON 格式驗證"
 
 if command -v jq &> /dev/null; then
-    # 驗證 Keycloak realm.json (如果存在)
+    # 範本一定要在（版控中的事實源）；實體檔只有跑過 setup.sh 的機器才有
+    if [ -f "keycloak/import/outline-realm.json.template" ]; then
+        if jq empty keycloak/import/outline-realm.json.template 2>/dev/null; then
+            print_pass "keycloak/import/outline-realm.json.template 格式正確"
+        else
+            print_fail "keycloak/import/outline-realm.json.template 格式錯誤"
+        fi
+    else
+        print_fail "keycloak/import/outline-realm.json.template 不存在"
+    fi
+
     if [ -f "keycloak/import/outline-realm.json" ]; then
         if jq empty keycloak/import/outline-realm.json 2>/dev/null; then
             print_pass "keycloak/import/outline-realm.json 格式正確"
@@ -138,21 +149,25 @@ print_header "5. Docker Compose 驗證"
 
 if command -v docker &> /dev/null; then
     # 建立臨時 .env 檔案用於驗證 (如果不存在)
+    # 只在 .env 不存在時借用 .env.example。務必用 trap 清理：
+    # 沒有 trap 的話，中途 Ctrl-C 會在機器上留下一個全是佔位值的 .env。
     TEMP_ENV=0
     if [ ! -f ".env" ]; then
         cp .env.example .env 2>/dev/null || true
         TEMP_ENV=1
+        trap 'rm -f .env' EXIT INT TERM
     fi
 
-    if docker compose config > /dev/null 2>&1; then
+    if COMPOSE_ERR=$(docker compose config 2>&1 >/dev/null); then
         print_pass "docker-compose.yml 設定有效"
     else
         print_fail "docker-compose.yml 設定無效"
+        echo "$COMPOSE_ERR"
     fi
 
-    # 清理臨時檔案
     if [ $TEMP_ENV -eq 1 ]; then
         rm -f .env
+        trap - EXIT INT TERM
     fi
 else
     print_skip "docker 未安裝"
@@ -196,6 +211,7 @@ REQUIRED_FILES=(
     ".env.example"
     "scripts/setup.sh"
     "scripts/initdb/init-keycloak-db.sql"
+    "keycloak/import/outline-realm.json.template"
     "nginx/templates/outline.conf.template"
     "nginx/templates/outline-temp.conf.template"
     "README.md"

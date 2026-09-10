@@ -10,10 +10,14 @@ nginx/certs/
 # Let's Encrypt 驗證目錄
 nginx/www/
 
+# Keycloak realm 設定：setup.sh 會把真實的 OIDC client secret 寫進去。
+# 版控只留 *.json.template（佔位值）；Keycloak 的 import 只吃 *.json，故範本不會被誤匯入。
+keycloak/import/*.json
+
 # 執行時生成的設定檔
 nginx/conf.d/outline.conf
 nginx/conf.d/outline.conf.ssl
-nginx/conf.d/outline-temp.conf
+nginx/conf.d/outline-temp.conf.tmpl
 
 # 備份檔案
 *.backup
@@ -29,9 +33,5 @@ nginx/conf.d/outline-temp.conf
 .idea/
 .vscode/
 *.swp
-.asp-session-briefing.json
-.asp-audit-baseline.json
-.asp-bypass-log.ndjson
-.asp-telemetry.jsonl
-.asp-fact-check.md
-.asp-review-calibration.jsonl
+# ASP 治理框架產物（通配，避免每新增一種就漏一個）
+.asp-*

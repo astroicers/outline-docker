@@ -27,9 +27,9 @@ jobs:
 
       - name: Validate JSON (if exists)
         run: |
-          if [ -f keycloak/import/outline-realm.json ]; then
-            jq empty keycloak/import/outline-realm.json
-          fi
+          for f in keycloak/import/outline-realm.json.template keycloak/import/outline-realm.json; do
+            if [ -f "$f" ]; then jq empty "$f"; fi
+          done
 
       - name: Validate Docker Compose
         run: |
@@ -45,6 +45,7 @@ jobs:
             ".env.example"
             "scripts/setup.sh"
             "scripts/initdb/init-keycloak-db.sql"
+            "keycloak/import/outline-realm.json.template"
             "nginx/templates/outline.conf.template"
             "nginx/templates/outline-temp.conf.template"
             "README.md"
@@ -59,12 +60,37 @@ jobs:
 
       - name: Check for committed secrets
         run: |
+          fail=0
+
+          # 1. 明確不該進版控的檔案
           for file in .env .env.local .env.backup; do
             if git ls-files --error-unmatch "$file" 2>/dev/null; then
               echo "ERROR: $file should not be committed"
-              exit 1
+              fail=1
             fi
           done
+
+          # 2. Keycloak realm 實體檔（含真實 client secret）只能以 .json.template 進版控
+          if git ls-files --error-unmatch keycloak/import/outline-realm.json 2>/dev/null; then
+            echo "ERROR: keycloak/import/outline-realm.json contains a real OIDC client secret"
+            echo "       Only outline-realm.json.template belongs in git."
+            fail=1
+          fi
+
+          # 3. 掃所有 tracked file 的高熵字串與非佔位的 secret 欄位
+          #    （前一版只檢查 .env* 檔名，realm json 的密鑰完全漏掉，卻仍印出 "No secrets committed"）
+          if git grep -lIE '[0-9a-f]{32,}' -- . ':!*.md' ':!.github/*' | grep -q .; then
+            echo "ERROR: possible secret (32+ hex chars) in tracked files:"
+            git grep -lIE '[0-9a-f]{32,}' -- . ':!*.md' ':!.github/*'
+            fail=1
+          fi
+          if git grep -lIE '"secret"[[:space:]]*:[[:space:]]*"[^"]{20,}"' -- . | grep -q .; then
+            echo "ERROR: long secret value in tracked JSON:"
+            git grep -lIE '"secret"[[:space:]]*:[[:space:]]*"[^"]{20,}"' -- .
+            fail=1
+          fi
+
+          [ "$fail" -eq 0 ] || exit 1
           echo "No secrets committed"
 
       - name: Validate Nginx templates
