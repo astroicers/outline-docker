@@ -190,7 +190,7 @@ make doctor             # 順帶檢查憑證是否即將到期、hook 是否還�
 
 > 不要另外架 cron 或手動跑 `docker run ... certbot renew`。理由有兩個：
 > 一是會變成第二套續期路徑，重複續期會撞上 Let's Encrypt 的速率限制；
-> 二是那樣的 `docker run` 沒有掛 `/opt/scripts` 也沒有掛 docker socket，
+> 二是那樣的 `docker run` 沒有掛 `/opt/scripts`，也不在 nginx 的 PID namespace 裡，
 > deploy hook 一定失敗——結果是**憑證換了但 nginx 一直送舊的**，
 > 直到舊憑證過期才爆出 SSL 錯誤，中間毫無告警。
 
@@ -309,7 +309,9 @@ bind-mount 快取本身壞了，需在 Windows 端重啟 Docker Desktop 再跑�
 
 > 本專案已把所有**專案檔案**的單檔 bind mount 改為目錄掛載（`scripts/initdb/`、
 > `keycloak/import/`、`/opt/scripts`），消除 exit 127 那一類故障。
-> `/var/run/docker.sock` 是刻意的例外——它由 Docker Desktop 提供，不走 WSL inode 快取。
+> certbot 與 nginx 共用 PID namespace（`pid: "service:nginx"`），deploy hook 靠 `kill -HUP 1`
+> 通知 nginx reload，因此**不需要**掛 `/var/run/docker.sock`。
+> 代價是 nginx 一旦重建，certbot 也要跟著重建（`docker compose up -d certbot`）。
 >
 > **要留意代價**：單檔掛載壞掉時會停機（exit 127），是個大聲的警報；改成目錄掛載後
 > 同一個事件變成**安靜地掛空**。因此 nginx 與 certbot 都加了 healthcheck 把它變回可見
