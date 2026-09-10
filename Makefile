@@ -1,7 +1,8 @@
 # Outline Docker 專案 Makefile
 # 使用方式: make <target>
 
-.PHONY: help validate validate-quick setup up down restart logs ps backup
+.PHONY: help validate validate-quick setup up down restart logs logs-outline logs-keycloak \
+        logs-nginx ps db-shell backup doctor recover cert-renew cert-renew-force cert-status new-spec
 
 # 預設目標
 help:
@@ -17,6 +18,8 @@ help:
 	@echo "  make down           停止所有服務"
 	@echo "  make restart        重啟所有服務"
 	@echo "  make ps             查看服務狀態"
+	@echo "  make doctor         健康診斷（掛載／TLS／憑證，唯讀）"
+	@echo "  make recover        重建容器修復失效的 bind mount，再跑 doctor"
 	@echo "  make logs           查看日誌 (全部)"
 	@echo "  make logs-outline   查看 Outline 日誌"
 	@echo "  make logs-keycloak  查看 Keycloak 日誌"
@@ -27,7 +30,8 @@ help:
 	@echo "  make backup         備份資料庫"
 	@echo ""
 	@echo "SSL 憑證:"
-	@echo "  make cert-renew     強制更新 SSL 憑證"
+	@echo "  make cert-renew     更新 SSL 憑證 (到期前不會動作)"
+	@echo "  make cert-renew-force 強制更新 (會消耗速率限制額度)"
 	@echo "  make cert-status    查看憑證狀態"
 	@echo ""
 	@echo "開發:"
@@ -44,7 +48,7 @@ validate-quick:
 	@echo "快速驗證 (不需要 Docker)..."
 	@command -v shellcheck > /dev/null && shellcheck scripts/*.sh || echo "shellcheck 未安裝，跳過"
 	@command -v yamllint > /dev/null && yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml || echo "yamllint 未安裝，跳過"
-	@command -v jq > /dev/null && [ -f keycloak/outline-realm.json ] && jq empty keycloak/outline-realm.json || true
+	@command -v jq > /dev/null && [ -f keycloak/import/outline-realm.json.template ] && jq empty keycloak/import/outline-realm.json.template || true
 	@echo "快速驗證完成"
 
 # ============================================
@@ -62,6 +66,19 @@ down:
 
 restart:
 	docker compose restart
+
+# Docker Desktop / WSL2 重啟後 bind mount 會失效（目錄靜默掛空、單檔 exit 127）。
+# restart 救不了——必須重建容器才會重新解析到當前的 host inode。
+recover:
+	@echo "重建容器以修復失效的 bind mount..."
+	docker compose down --remove-orphans
+	docker compose up -d
+	@echo "等待服務就緒..."
+	@sleep 15
+	@$(MAKE) --no-print-directory doctor
+
+doctor:
+	@./scripts/doctor.sh
 
 ps:
 	docker compose ps
@@ -85,11 +102,12 @@ logs-nginx:
 db-shell:
 	docker compose exec postgres psql -U outline
 
+# 導向檔案時一定要 -T：沒有它 docker 會配置 TTY，備份內容會被加上 CRLF 而損壞
 backup:
 	@echo "備份 Outline 資料庫..."
-	@docker compose exec postgres pg_dump -U outline outline > outline-backup.sql
+	@docker compose exec -T postgres pg_dump -U outline outline > outline-backup.sql
 	@echo "備份 Keycloak 資料庫..."
-	@docker compose exec postgres pg_dump -U outline keycloak > keycloak-backup.sql
+	@docker compose exec -T postgres pg_dump -U outline keycloak > keycloak-backup.sql
 	@echo "備份完成: outline-backup.sql, keycloak-backup.sql"
 
 # ============================================
@@ -100,7 +118,13 @@ backup:
 # SSL 憑證
 # ============================================
 
+# 預設不強制：Let's Encrypt 對「相同憑證」每週上限 5 張，
+# 連按幾次 --force-renewal 就會被擋，屆時憑證到期也簽不出來。
 cert-renew:
+	docker compose exec certbot certbot renew
+
+cert-renew-force:
+	@echo "⚠ 強制續期會消耗 Let's Encrypt 的每週 5 張額度，僅在確有需要時使用"
 	docker compose exec certbot certbot renew --force-renewal
 
 cert-status:

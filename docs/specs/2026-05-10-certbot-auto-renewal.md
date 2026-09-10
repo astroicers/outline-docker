@@ -30,8 +30,22 @@ Let's Encrypt 憑證有效期為 90 天。目前憑證（`wiki.astroicers.link`�
 
 ### 設定變更
 
+> ⚠ **本節為 2026-05-10 當時的規劃，已被後續變更取代。**
+> 實際生效的設定以 `docker-compose.yml` 為準，**不要把下面這段抄回去**——
+> 它用的是單檔 bind mount，而那正是 2026-09-10 線上事故（Cloudflare 525）的成因之一。
+
+實際與規劃的差異：
+
+| 規劃 | 現況 | 原因 |
+|---|---|---|
+| entrypoint 無 `apk add` | 有 `apk add --no-cache curl -q` | deploy hook 需要 curl 打 docker socket |
+| hook 路徑 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` | `/opt/scripts/deploy-hook.sh` | 原路徑是疊在 `/etc/letsencrypt` 內的巢狀單檔掛載，最易錯亂 |
+| 單檔掛載 `./scripts/deploy-hook.sh:...` | 目錄掛載 `./scripts:/opt/scripts:ro` | 單檔 bind mount 在 Docker Desktop/WSL2 重啟後 `exit 127` |
+| 掛 `docker-compose.yml` 進容器 | 已移除 | 用不到（commit `1296ec2`） |
+| 無 healthcheck | 有（檢查 hook 與 curl 皆在） | 目錄掛載失效是「靜默掛空」，需要 healthcheck 才看得見 |
+
 ```yaml
-# docker-compose.yml 新增 certbot service
+# 當時的規劃（僅供對照，非現況）
 certbot:
   image: certbot/certbot
   entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh; sleep 12h & wait $${!}; done"
@@ -40,7 +54,6 @@ certbot:
     - ./nginx/www:/var/www/certbot
     - ./scripts/deploy-hook.sh:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh:ro
     - /var/run/docker.sock:/var/run/docker.sock:ro
-    - /home/ubuntu/outline-docker/docker-compose.yml:/outline-docker/docker-compose.yml:ro
   depends_on:
     - nginx
   restart: unless-stopped
@@ -54,12 +67,14 @@ certbot:
 
 以下條件均為二元可驗證（Pass / Fail）：
 
-- [ ] **D1** `docker compose ps certbot` 輸出狀態為 `running`（非 `exited` 或 `restarting`）
+- [x] **D1** `docker compose ps certbot` 輸出狀態為 `running`（非 `exited` 或 `restarting`）
 - [ ] **D2** `docker compose logs certbot` 顯示 certbot renew 執行記錄，且日誌間隔約 12 小時出現一次（或顯示 "not yet due" 後進入 sleep）
-- [ ] **D3** `make cert-status` 指令可用且輸出憑證到期日（不報 `make: *** No rule to make target` 錯誤）
-- [ ] **D4** `make cert-renew` 指令可用且執行後 certbot logs 顯示 renewal 嘗試記錄
+- [x] **D3** `make cert-status` 指令可用且輸出憑證到期日（不報 `make: *** No rule to make target` 錯誤）
+- [x] **D4** `make cert-renew` 指令可用且執行後 certbot logs 顯示 renewal 嘗試記錄
 - [ ] **D5** `certbot renew --dry-run`（在 certbot container 內執行）回傳 exit code 0，確認 ACME challenge 路由與 webroot 設定正確
-- [ ] **D6** 模擬 deploy hook（`docker compose exec certbot sh /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`）執行後，`docker compose logs nginx` 顯示 reload 訊息，且 HTTPS 服務不中斷
+- [x] **D6** 模擬 deploy hook（`docker compose exec certbot sh /opt/scripts/deploy-hook.sh`）執行後，`docker compose logs nginx` 顯示 `signal 1 (SIGHUP) received, reconfiguring`，且 HTTPS 服務不中斷（2026-09-10 實測，執行前後 origin 皆 200）
+
+> 註：D6 原本寫的驗證路徑 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` 已隨掛載方式改變而失效，照舊路徑跑會得到 file-not-found 而被誤判為「hook 壞了」。
 
 ## 風險
 

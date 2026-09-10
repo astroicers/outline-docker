@@ -1,6 +1,11 @@
 # Certbot Auto-Renewal Docker Service Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Status: Completed** — 2026-05-10，commits `dce8d77` / `3016b95` / `1296ec2`。
+>
+> ⚠ **本文件為歷史紀錄，請勿再次執行。** 它描述的是舊架構（單檔 bind mount、
+> `docker compose exec nginx nginx -s reload`），與現況已有多處不同；照它重跑會把
+> 2026-09-10 修掉的東西改回去，直接復現當時的 Cloudflare 525 事故。
+> 現況以 `docker-compose.yml` 與 `docs/specs/2026-05-10-certbot-auto-renewal.md` 為準。
 
 **Goal:** Add a certbot service to docker-compose.yml that automatically renews Let's Encrypt certificates every 12 hours, eliminating the need for manual renewal.
 

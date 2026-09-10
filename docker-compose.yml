@@ -16,14 +16,18 @@ services:
 
   postgres:
     image: postgres:15
-    env_file: .env
+    # 刻意不用 env_file：那會把 .env 的全部密鑰（SECRET_KEY / UTILS_SECRET /
+    # OIDC_CLIENT_SECRET / KEYCLOAK_ADMIN_PASSWORD）灌進 postgres 容器，
+    # 而它一個都用不到。這些值也會出現在 docker inspect 輸出裡。
+    # 下面的 environment 用 ${VAR} 變數替換，compose 仍會從 .env 取值。
     environment:
       POSTGRES_USER: outline
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: outline
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./scripts/init-keycloak-db.sql:/docker-entrypoint-initdb.d/init-keycloak-db.sql:ro
+      # 目錄掛載（非單檔）：Docker Desktop/WSL2 重啟後單檔 bind mount 會 exit 127
+      - ./scripts/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U outline"]
       interval: 10s
@@ -49,7 +53,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
     command: start --import-realm
     volumes:
-      - ./keycloak/outline-realm.json:/opt/keycloak/data/import/outline-realm.json:ro
+      # 目錄掛載（非單檔）：見 postgres 同上
+      - ./keycloak/import:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,18 +69,40 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/letsencrypt:ro
       - ./nginx/www:/var/www/certbot
+    # 偵測「掛載掛成空目錄」的靜默失效：config 要在，且容器內真的有人在聽 443
+    healthcheck:
+      test: ["CMD-SHELL", "ls /etc/nginx/conf.d/*.conf >/dev/null 2>&1 && nc -z 127.0.0.1 443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       - outline
     restart: unless-stopped
 
   certbot:
     image: certbot/certbot
-    entrypoint: /bin/sh -c "apk add --no-cache curl -q && trap exit TERM; while :; do certbot renew --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh; sleep 12h & wait $${!}; done"
+    entrypoint: /bin/sh -c "apk add --no-cache curl -q && trap exit TERM; while :; do certbot renew --deploy-hook /opt/scripts/deploy-hook.sh; sleep 12h & wait $${!}; done"
     volumes:
       - ./nginx/certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot
-      - ./scripts/deploy-hook.sh:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh:ro
+      # 掛在 /opt/scripts（非 /etc/letsencrypt 底下）：避免巢狀 bind mount
+      - ./scripts:/opt/scripts:ro
+      # docker.sock 是刻意保留的單檔掛載：它由 Docker Desktop 提供，
+      # 不走 WSL host inode 快取，沒有上述失效模式。
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # 單檔改目錄後，掛載失效由「exit 127 停機」變成「靜默掛空」。
+    # certbot 是潛伏期最長的一條：hook 掛空 → 憑證更新了但 nginx 永不 reload
+    # → 繼續送舊憑證直到過期，中間毫無告警。這裡把它變成可見。
+    healthcheck:
+      # 同時檢查 curl：entrypoint 每次啟動都 apk add curl，那一步失敗時
+      # hook 檔案還在（所以只檢查檔案抓不到），但容器會進入無限重啟迴圈、
+      # 憑證再也不會續期。
+      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh && command -v curl >/dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       - nginx
     restart: unless-stopped

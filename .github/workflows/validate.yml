@@ -27,9 +27,9 @@ jobs:
 
       - name: Validate JSON (if exists)
         run: |
-          if [ -f keycloak/outline-realm.json ]; then
-            jq empty keycloak/outline-realm.json
-          fi
+          for f in keycloak/import/outline-realm.json.template keycloak/import/outline-realm.json; do
+            if [ -f "$f" ]; then jq empty "$f"; fi
+          done
 
       - name: Validate Docker Compose
         run: |
@@ -44,7 +44,8 @@ jobs:
             "docker-compose.yml"
             ".env.example"
             "scripts/setup.sh"
-            "scripts/init-keycloak-db.sql"
+            "scripts/initdb/init-keycloak-db.sql"
+            "keycloak/import/outline-realm.json.template"
             "nginx/templates/outline.conf.template"
             "nginx/templates/outline-temp.conf.template"
             "README.md"
@@ -59,21 +60,69 @@ jobs:
 
       - name: Check for committed secrets
         run: |
+          fail=0
+
+          # 1. 明確不該進版控的檔案
           for file in .env .env.local .env.backup; do
             if git ls-files --error-unmatch "$file" 2>/dev/null; then
               echo "ERROR: $file should not be committed"
-              exit 1
+              fail=1
             fi
           done
+
+          # 2. Keycloak realm 實體檔（含真實 client secret）只能以 .json.template 進版控
+          if git ls-files --error-unmatch keycloak/import/outline-realm.json 2>/dev/null; then
+            echo "ERROR: keycloak/import/outline-realm.json contains a real OIDC client secret"
+            echo "       Only outline-realm.json.template belongs in git."
+            fail=1
+          fi
+
+          # 3. 掃所有 tracked file 的高熵字串與非佔位的 secret 欄位
+          #    （前一版只檢查 .env* 檔名，realm json 的密鑰完全漏掉，卻仍印出 "No secrets committed"）
+          if git grep -lIE '[0-9a-f]{32,}' -- . ':!*.md' ':!.github/*' | grep -q .; then
+            echo "ERROR: possible secret (32+ hex chars) in tracked files:"
+            git grep -lIE '[0-9a-f]{32,}' -- . ':!*.md' ':!.github/*'
+            fail=1
+          fi
+          if git grep -lIE '"secret"[[:space:]]*:[[:space:]]*"[^"]{20,}"' -- . | grep -q .; then
+            echo "ERROR: long secret value in tracked JSON:"
+            git grep -lIE '"secret"[[:space:]]*:[[:space:]]*"[^"]{20,}"' -- .
+            fail=1
+          fi
+
+          [ "$fail" -eq 0 ] || exit 1
           echo "No secrets committed"
 
       - name: Validate Nginx templates
         run: |
           for template in nginx/templates/*.template; do
-            echo "Checking $template..."
             grep -q "server {" "$template" || {
               echo "ERROR: Missing server block in $template"
               exit 1
             }
           done
-          echo "Nginx templates valid"
+
+          # 真的跑一次 nginx -t。只做 grep 的話抓不到 conflicting server name
+          # 這類問題——而那正是「照文件安裝後 80 埠行為錯誤」的成因。
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/conf.d" "$tmp/certs/live/validate.example"
+          sed -e 's/WIKI_DOMAIN/validate.example/g' \
+              -e 's/AUTH_DOMAIN/auth.validate.example/g' \
+              -e 's#http://outline:3000#http://127.0.0.1:3000#' \
+              -e 's#http://keycloak:8080#http://127.0.0.1:8080#' \
+              nginx/templates/outline.conf.template > "$tmp/conf.d/outline.conf"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -keyout "$tmp/certs/live/validate.example/privkey.pem" \
+              -out "$tmp/certs/live/validate.example/fullchain.pem" \
+              -subj "/CN=validate.example" 2>/dev/null
+
+          out=$(docker run --rm \
+              -v "$tmp/conf.d:/etc/nginx/conf.d:ro" \
+              -v "$tmp/certs:/etc/letsencrypt:ro" \
+              nginx:alpine nginx -t 2>&1) || { echo "$out"; exit 1; }
+          if echo "$out" | grep -qiE "conflicting server name|\[warn\]"; then
+            echo "ERROR: nginx -t reported warnings:"
+            echo "$out" | grep -iE "conflicting|warn"
+            exit 1
+          fi
+          echo "Nginx templates valid (nginx -t clean)"

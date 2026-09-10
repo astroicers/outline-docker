@@ -2,7 +2,8 @@
 set -e
 
 # 切換到專案根目錄
-cd "$(dirname "$0")/.."
+# readlink -f：若日後有 symlink 指向本檔，$0 不解析 symlink 會 cd 錯地方
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
 
 # 顏色定義
 RED='\033[0;31m'
@@ -44,7 +45,7 @@ print_header "Outline Docker 專案驗證"
 print_header "1. ShellCheck - Shell 腳本檢查"
 
 if command -v shellcheck &> /dev/null; then
-    if shellcheck scripts/setup.sh scripts/validate.sh 2>/dev/null; then
+    if shellcheck scripts/*.sh 2>/dev/null; then
         print_pass "Shell 腳本語法正確"
     else
         print_fail "Shell 腳本有問題，請執行 shellcheck scripts/*.sh 查看詳情"
@@ -83,15 +84,25 @@ fi
 print_header "3. JSON 格式驗證"
 
 if command -v jq &> /dev/null; then
-    # 驗證 Keycloak realm.json (如果存在)
-    if [ -f "keycloak/outline-realm.json" ]; then
-        if jq empty keycloak/outline-realm.json 2>/dev/null; then
-            print_pass "keycloak/outline-realm.json 格式正確"
+    # 範本一定要在（版控中的事實源）；實體檔只有跑過 setup.sh 的機器才有
+    if [ -f "keycloak/import/outline-realm.json.template" ]; then
+        if jq empty keycloak/import/outline-realm.json.template 2>/dev/null; then
+            print_pass "keycloak/import/outline-realm.json.template 格式正確"
         else
-            print_fail "keycloak/outline-realm.json 格式錯誤"
+            print_fail "keycloak/import/outline-realm.json.template 格式錯誤"
         fi
     else
-        print_skip "keycloak/outline-realm.json 不存在 (執行 setup.sh 後生成)"
+        print_fail "keycloak/import/outline-realm.json.template 不存在"
+    fi
+
+    if [ -f "keycloak/import/outline-realm.json" ]; then
+        if jq empty keycloak/import/outline-realm.json 2>/dev/null; then
+            print_pass "keycloak/import/outline-realm.json 格式正確"
+        else
+            print_fail "keycloak/import/outline-realm.json 格式錯誤"
+        fi
+    else
+        print_skip "keycloak/import/outline-realm.json 不存在 (執行 setup.sh 後生成)"
     fi
 else
     print_skip "jq 未安裝 (apt install jq)"
@@ -138,21 +149,25 @@ print_header "5. Docker Compose 驗證"
 
 if command -v docker &> /dev/null; then
     # 建立臨時 .env 檔案用於驗證 (如果不存在)
+    # 只在 .env 不存在時借用 .env.example。務必用 trap 清理：
+    # 沒有 trap 的話，中途 Ctrl-C 會在機器上留下一個全是佔位值的 .env。
     TEMP_ENV=0
     if [ ! -f ".env" ]; then
         cp .env.example .env 2>/dev/null || true
         TEMP_ENV=1
+        trap 'rm -f .env' EXIT INT TERM
     fi
 
-    if docker compose config > /dev/null 2>&1; then
+    if COMPOSE_ERR=$(docker compose config 2>&1 >/dev/null); then
         print_pass "docker-compose.yml 設定有效"
     else
         print_fail "docker-compose.yml 設定無效"
+        echo "$COMPOSE_ERR"
     fi
 
-    # 清理臨時檔案
     if [ $TEMP_ENV -eq 1 ]; then
         rm -f .env
+        trap - EXIT INT TERM
     fi
 else
     print_skip "docker 未安裝"
@@ -163,27 +178,58 @@ fi
 # ============================================
 print_header "6. Nginx 設定模板驗證"
 
-# 檢查模板檔案存在
-if [ -f "nginx/templates/outline.conf.template" ]; then
-    # 基本語法檢查：確認有必要的區塊
-    if grep -q "server {" nginx/templates/outline.conf.template && \
-       grep -q "location" nginx/templates/outline.conf.template; then
-        print_pass "nginx/templates/outline.conf.template 結構正確"
-    else
-        print_fail "nginx/templates/outline.conf.template 結構不完整"
+# 結構檢查（不需要 Docker）
+for tpl in nginx/templates/outline.conf.template nginx/templates/outline-temp.conf.template; do
+    if [ ! -f "$tpl" ]; then
+        print_fail "$tpl 不存在"
+        continue
     fi
-else
-    print_fail "nginx/templates/outline.conf.template 不存在"
-fi
+    if grep -q "server {" "$tpl"; then
+        print_pass "$tpl 結構正確"
+    else
+        print_fail "$tpl 結構不完整"
+    fi
+done
 
-if [ -f "nginx/templates/outline-temp.conf.template" ]; then
-    if grep -q "server {" nginx/templates/outline-temp.conf.template; then
-        print_pass "nginx/templates/outline-temp.conf.template 結構正確"
+# 真正的語法檢查：把模板渲染出來後在容器內跑 nginx -t。
+# 早期版本只做上面的 grep，抓不到 conflicting server name 這類問題——
+# 而那正是「照文件安裝後 80 埠行為錯誤」的成因。
+if command -v docker &> /dev/null; then
+    NGINX_TMP=$(mktemp -d)
+    trap 'rm -rf "$NGINX_TMP"' EXIT
+
+    mkdir -p "$NGINX_TMP/conf.d" "$NGINX_TMP/certs/live/validate.example"
+    # upstream 名稱在 CI 沒有 compose 網路可解析，換成 127.0.0.1 才驗得了語法
+    sed -e 's/WIKI_DOMAIN/validate.example/g' \
+        -e 's/AUTH_DOMAIN/auth.validate.example/g' \
+        -e 's#http://outline:3000#http://127.0.0.1:3000#' \
+        -e 's#http://keycloak:8080#http://127.0.0.1:8080#' \
+        nginx/templates/outline.conf.template > "$NGINX_TMP/conf.d/outline.conf"
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+        -keyout "$NGINX_TMP/certs/live/validate.example/privkey.pem" \
+        -out "$NGINX_TMP/certs/live/validate.example/fullchain.pem" \
+        -subj "/CN=validate.example" &> /dev/null
+
+    if NGINX_OUT=$(docker run --rm \
+            -v "$NGINX_TMP/conf.d:/etc/nginx/conf.d:ro" \
+            -v "$NGINX_TMP/certs:/etc/letsencrypt:ro" \
+            nginx:alpine nginx -t 2>&1); then
+        if printf '%s' "$NGINX_OUT" | grep -qiE "conflicting server name|\[warn\]"; then
+            print_fail "nginx -t 通過但有警告"
+            printf '%s\n' "$NGINX_OUT" | grep -iE "conflicting|warn"
+        else
+            print_pass "nginx -t 語法檢查通過且無警告"
+        fi
     else
-        print_fail "nginx/templates/outline-temp.conf.template 結構不完整"
+        print_fail "nginx -t 語法檢查失敗"
+        printf '%s\n' "$NGINX_OUT" | grep -iE "emerg|error" | head -5
     fi
+
+    rm -rf "$NGINX_TMP"
+    trap - EXIT
 else
-    print_fail "nginx/templates/outline-temp.conf.template 不存在"
+    print_skip "nginx -t 語法檢查 (需要 docker)"
 fi
 
 # ============================================
@@ -195,7 +241,8 @@ REQUIRED_FILES=(
     "docker-compose.yml"
     ".env.example"
     "scripts/setup.sh"
-    "scripts/init-keycloak-db.sql"
+    "scripts/initdb/init-keycloak-db.sql"
+    "keycloak/import/outline-realm.json.template"
     "nginx/templates/outline.conf.template"
     "nginx/templates/outline-temp.conf.template"
     "README.md"
