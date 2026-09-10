@@ -16,7 +16,10 @@ services:
 
   postgres:
     image: postgres:15
-    env_file: .env
+    # 刻意不用 env_file：那會把 .env 的全部密鑰（SECRET_KEY / UTILS_SECRET /
+    # OIDC_CLIENT_SECRET / KEYCLOAK_ADMIN_PASSWORD）灌進 postgres 容器，
+    # 而它一個都用不到。這些值也會出現在 docker inspect 輸出裡。
+    # 下面的 environment 用 ${VAR} 變數替換，compose 仍會從 .env 取值。
     environment:
       POSTGRES_USER: outline
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -92,7 +95,10 @@ services:
     # certbot 是潛伏期最長的一條：hook 掛空 → 憑證更新了但 nginx 永不 reload
     # → 繼續送舊憑證直到過期，中間毫無告警。這裡把它變成可見。
     healthcheck:
-      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh"]
+      # 同時檢查 curl：entrypoint 每次啟動都 apk add curl，那一步失敗時
+      # hook 檔案還在（所以只檢查檔案抓不到），但容器會進入無限重啟迴圈、
+      # 憑證再也不會續期。
+      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh && command -v curl >/dev/null"]
       interval: 60s
       timeout: 5s
       retries: 3

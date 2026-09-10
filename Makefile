@@ -1,7 +1,8 @@
 # Outline Docker 專案 Makefile
 # 使用方式: make <target>
 
-.PHONY: help validate validate-quick setup up down restart logs ps backup doctor recover
+.PHONY: help validate validate-quick setup up down restart logs logs-outline logs-keycloak \
+        logs-nginx ps db-shell backup doctor recover cert-renew cert-renew-force cert-status new-spec
 
 # 預設目標
 help:
@@ -29,7 +30,8 @@ help:
 	@echo "  make backup         備份資料庫"
 	@echo ""
 	@echo "SSL 憑證:"
-	@echo "  make cert-renew     強制更新 SSL 憑證"
+	@echo "  make cert-renew     更新 SSL 憑證 (到期前不會動作)"
+	@echo "  make cert-renew-force 強制更新 (會消耗速率限制額度)"
 	@echo "  make cert-status    查看憑證狀態"
 	@echo ""
 	@echo "開發:"
@@ -100,11 +102,12 @@ logs-nginx:
 db-shell:
 	docker compose exec postgres psql -U outline
 
+# 導向檔案時一定要 -T：沒有它 docker 會配置 TTY，備份內容會被加上 CRLF 而損壞
 backup:
 	@echo "備份 Outline 資料庫..."
-	@docker compose exec postgres pg_dump -U outline outline > outline-backup.sql
+	@docker compose exec -T postgres pg_dump -U outline outline > outline-backup.sql
 	@echo "備份 Keycloak 資料庫..."
-	@docker compose exec postgres pg_dump -U outline keycloak > keycloak-backup.sql
+	@docker compose exec -T postgres pg_dump -U outline keycloak > keycloak-backup.sql
 	@echo "備份完成: outline-backup.sql, keycloak-backup.sql"
 
 # ============================================
@@ -115,7 +118,13 @@ backup:
 # SSL 憑證
 # ============================================
 
+# 預設不強制：Let's Encrypt 對「相同憑證」每週上限 5 張，
+# 連按幾次 --force-renewal 就會被擋，屆時憑證到期也簽不出來。
 cert-renew:
+	docker compose exec certbot certbot renew
+
+cert-renew-force:
+	@echo "⚠ 強制續期會消耗 Let's Encrypt 的每週 5 張額度，僅在確有需要時使用"
 	docker compose exec certbot certbot renew --force-renewal
 
 cert-status:
