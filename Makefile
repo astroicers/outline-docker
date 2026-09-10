@@ -1,7 +1,7 @@
 # Outline Docker 專案 Makefile
 # 使用方式: make <target>
 
-.PHONY: help validate validate-quick setup up down restart logs ps backup
+.PHONY: help validate validate-quick setup up down restart logs ps backup doctor recover
 
 # 預設目標
 help:
@@ -17,6 +17,8 @@ help:
 	@echo "  make down           停止所有服務"
 	@echo "  make restart        重啟所有服務"
 	@echo "  make ps             查看服務狀態"
+	@echo "  make doctor         健康診斷（掛載／TLS／憑證，唯讀）"
+	@echo "  make recover        重建容器修復失效的 bind mount，再跑 doctor"
 	@echo "  make logs           查看日誌 (全部)"
 	@echo "  make logs-outline   查看 Outline 日誌"
 	@echo "  make logs-keycloak  查看 Keycloak 日誌"
@@ -44,7 +46,7 @@ validate-quick:
 	@echo "快速驗證 (不需要 Docker)..."
 	@command -v shellcheck > /dev/null && shellcheck scripts/*.sh || echo "shellcheck 未安裝，跳過"
 	@command -v yamllint > /dev/null && yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml || echo "yamllint 未安裝，跳過"
-	@command -v jq > /dev/null && [ -f keycloak/outline-realm.json ] && jq empty keycloak/outline-realm.json || true
+	@command -v jq > /dev/null && [ -f keycloak/import/outline-realm.json ] && jq empty keycloak/import/outline-realm.json || true
 	@echo "快速驗證完成"
 
 # ============================================
@@ -62,6 +64,19 @@ down:
 
 restart:
 	docker compose restart
+
+# Docker Desktop / WSL2 重啟後 bind mount 會失效（目錄靜默掛空、單檔 exit 127）。
+# restart 救不了——必須重建容器才會重新解析到當前的 host inode。
+recover:
+	@echo "重建容器以修復失效的 bind mount..."
+	docker compose down --remove-orphans
+	docker compose up -d
+	@echo "等待服務就緒..."
+	@sleep 15
+	@$(MAKE) --no-print-directory doctor
+
+doctor:
+	@./scripts/doctor.sh
 
 ps:
 	docker compose ps

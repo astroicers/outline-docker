@@ -27,8 +27,8 @@ jobs:
 
       - name: Validate JSON (if exists)
         run: |
-          if [ -f keycloak/outline-realm.json ]; then
-            jq empty keycloak/outline-realm.json
+          if [ -f keycloak/import/outline-realm.json ]; then
+            jq empty keycloak/import/outline-realm.json
           fi
 
       - name: Validate Docker Compose
@@ -44,7 +44,7 @@ jobs:
             "docker-compose.yml"
             ".env.example"
             "scripts/setup.sh"
-            "scripts/init-keycloak-db.sql"
+            "scripts/initdb/init-keycloak-db.sql"
             "nginx/templates/outline.conf.template"
             "nginx/templates/outline-temp.conf.template"
             "README.md"

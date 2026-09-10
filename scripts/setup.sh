@@ -101,7 +101,7 @@ sed -i "s/AUTH_DOMAIN/${AUTH_DOMAIN}/g" nginx/conf.d/outline-temp.conf
 
 # 更新 Keycloak Realm JSON
 echo "正在建立 Keycloak 用戶設定..."
-cat > keycloak/outline-realm.json << EOF
+cat > keycloak/import/outline-realm.json << EOF
 {
   "realm": "outline",
   "enabled": true,
@@ -142,7 +142,7 @@ cat > keycloak/outline-realm.json << EOF
 EOF
 
 if [ -n "$USER2_EMAIL" ]; then
-cat >> keycloak/outline-realm.json << EOF
+cat >> keycloak/import/outline-realm.json << EOF
     ,{
       "username": "${USER2_EMAIL}",
       "email": "${USER2_EMAIL}",
@@ -155,7 +155,7 @@ cat >> keycloak/outline-realm.json << EOF
 EOF
 fi
 
-cat >> keycloak/outline-realm.json << EOF
+cat >> keycloak/import/outline-realm.json << EOF
   ]
 }
 EOF

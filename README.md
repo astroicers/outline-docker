@@ -179,7 +179,10 @@ outline-docker/
 ├── scripts/
 │   ├── setup.sh              # 安裝腳本
 │   ├── validate.sh           # 驗證腳本（CI 與本機共用）
-│   └── init-keycloak-db.sql  # Keycloak 資料庫初始化
+│   ├── doctor.sh             # 唯讀健康診斷（掛載／TLS／憑證）
+│   ├── deploy-hook.sh        # certbot 更新後 reload nginx
+│   └── initdb/               # 目錄掛載至 postgres 的 initdb
+│       └── init-keycloak-db.sql  # Keycloak 資料庫初始化
 ├── docs/
 │   ├── adr/                  # 架構決策記錄（ADR）
 │   │   └── ADR-001-initial-technology-stack.md  # 初始技術棧選型決策
@@ -189,7 +192,8 @@ outline-docker/
 │       └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
-│   └── outline-realm.json    # Keycloak Realm 設定
+│   └── import/               # 目錄掛載至 Keycloak 的 import
+│       └── outline-realm.json    # Keycloak Realm 設定
 ├── nginx/
 │   ├── templates/            # Nginx 設定模板
 │   │   ├── outline.conf.template
@@ -205,12 +209,61 @@ outline-docker/
 
 ## 故障排除
 
+### 先跑健康診斷
+
+```bash
+make doctor     # 唯讀：檢查掛載、TLS、憑證，並指出該做什麼
+```
+
 ### 服務狀態檢查
 
 ```bash
 docker compose ps
 docker compose logs [服務名稱]
 ```
+
+### SSL handshake failed / Cloudflare 525（Docker Desktop + WSL2）
+
+**症狀**：網站回 525 或 SSL handshake failed，但憑證明明沒過期；
+`docker compose ps` 顯示 postgres / keycloak / certbot `Exited (127)`，
+nginx 卻是 running；`docker compose exec nginx nginx -t` 還會通過。
+
+**成因**：Docker Desktop 的 WSL bind-mount 快取與 host inode 脫鉤（通常在
+Docker Desktop 或 WSL 重啟後、或 host 端目錄被重建過之後）。它有兩種壞法：
+
+| 掛載型態 | 結果 |
+|---|---|
+| 目錄 bind mount | **靜默**掛成空目錄，容器照常啟動 |
+| 單檔 bind mount | 硬失敗 `exit 127`，容器起不來 |
+
+nginx 屬於前者：`/etc/nginx/conf.d` 掛成空的 → 沒有任何 `listen 443 ssl`
+server block → `nginx -t` 因為「沒有 config 可以失敗」而通過 → 443 收到連線後
+立刻 EOF → CDN 判定 origin 握手失敗 → 525。
+
+**確認方式**：
+
+```bash
+docker compose exec nginx ls -la /etc/nginx/conf.d/ /etc/letsencrypt/
+# 掛載壞掉時這些會是空目錄（時間戳等於容器啟動時間）
+
+curl -sSk -o /dev/null -w '%{http_code}\n' \
+  --resolve wiki.example.com:443:127.0.0.1 https://wiki.example.com/
+# 掛載壞掉時得到 000 + "unexpected eof while reading"
+```
+
+**處置**：
+
+```bash
+make recover     # docker compose down + up，重建容器以重新解析掛載
+```
+
+`docker compose restart` **救不了**——restart 沿用既有的容器與掛載命名空間，
+必須 down/up 重建。若 `make recover` 後掛載仍是空的，代表 Docker Desktop 的
+bind-mount 快取本身壞了，需在 Windows 端重啟 Docker Desktop 再跑一次。
+
+> 本專案已把所有**單檔** bind mount 改為目錄掛載（`scripts/initdb/`、
+> `keycloak/import/`、`/opt/scripts`），消除 exit 127 那一類故障；
+> nginx 另有 healthcheck 會讓「掛空」在 `docker compose ps` 顯示為 unhealthy。
 
 ### 無法連接網站
 

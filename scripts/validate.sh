@@ -84,14 +84,14 @@ print_header "3. JSON 格式驗證"
 
 if command -v jq &> /dev/null; then
     # 驗證 Keycloak realm.json (如果存在)
-    if [ -f "keycloak/outline-realm.json" ]; then
-        if jq empty keycloak/outline-realm.json 2>/dev/null; then
-            print_pass "keycloak/outline-realm.json 格式正確"
+    if [ -f "keycloak/import/outline-realm.json" ]; then
+        if jq empty keycloak/import/outline-realm.json 2>/dev/null; then
+            print_pass "keycloak/import/outline-realm.json 格式正確"
         else
-            print_fail "keycloak/outline-realm.json 格式錯誤"
+            print_fail "keycloak/import/outline-realm.json 格式錯誤"
         fi
     else
-        print_skip "keycloak/outline-realm.json 不存在 (執行 setup.sh 後生成)"
+        print_skip "keycloak/import/outline-realm.json 不存在 (執行 setup.sh 後生成)"
     fi
 else
     print_skip "jq 未安裝 (apt install jq)"
@@ -195,7 +195,7 @@ REQUIRED_FILES=(
     "docker-compose.yml"
     ".env.example"
     "scripts/setup.sh"
-    "scripts/init-keycloak-db.sql"
+    "scripts/initdb/init-keycloak-db.sql"
     "nginx/templates/outline.conf.template"
     "nginx/templates/outline-temp.conf.template"
     "README.md"
