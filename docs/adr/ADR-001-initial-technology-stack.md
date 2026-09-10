@@ -56,11 +56,11 @@
 | Nginx | alpine | `nginx:alpine` |
 | PostgreSQL | 15 | `postgres:15` |
 | Redis | 7 | `redis:7` |
-| Certbot | latest | `certbot/certbot`（一次性 CLI 工具，非 compose service） |
+| Certbot | latest | `certbot/certbot`（**已改為常駐 compose service**，見下方「決策變更」） |
 
 架構：Internet → Nginx (80/443) → Outline (3000) / Keycloak (8080) → PostgreSQL + Redis
 
-PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak`），以 `init-keycloak-db.sql` 初始化腳本建立 Keycloak 用的 DB，降低服務數量。
+PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak`），以 `scripts/initdb/init-keycloak-db.sql` 初始化腳本建立 Keycloak 用的 DB，降低服務數量。
 
 ---
 
@@ -68,7 +68,7 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
 
 **正面影響：**
 - 完整掌控用戶帳號：所有帳號建立、停用、權限設定均在 Keycloak 管理，不依賴外部服務。
-- 自動化 SSL：certbot webroot 模式取得憑證，自動續期方案待實作（見 docs/plans/2026-05-10-certbot-auto-renew.md）。
+- 自動化 SSL：certbot webroot 模式取得憑證；自動續期已於 2026-05-10 實作為常駐 compose service。
 - 容器隔離：各服務以 Docker network 隔離，僅 Nginx 暴露 80/443，降低攻擊面。
 - 輕量反向代理：Nginx alpine image 約 20MB，資源佔用極低。
 
@@ -79,7 +79,7 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
 - PostgreSQL 共用單一 instance，若一個服務的查詢壓力過大可能影響另一個服務。
 
 **後續追蹤：**
-- [ ] 實作 certbot 自動更新 Docker service（見 docs/plans/2026-05-10-certbot-auto-renew.md）
+- [x] 實作 certbot 自動更新 Docker service（2026-05-10，commits dce8d77 / 3016b95 / 1296ec2）
 - [ ] 設定 PostgreSQL 備份排程（`make backup` 或 pg_dump cron）
 - [ ] 監控 Keycloak 記憶體使用，超過 1GB 時評估是否需要升級 VPS
 - [x] Keycloak Realm 設定已納入 git（outline-realm.json）
@@ -90,7 +90,7 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
 
 | 指標 | 目標值 | 驗證方式 | 檢查時間 |
 |------|--------|----------|----------|
-| 所有服務正常啟動 | 5 個容器均為 `Up` 狀態 | `docker compose ps` | 部署完成時 |
+| 所有服務正常啟動 | 6 個容器均為 `Up` 狀態（outline / postgres / redis / keycloak / nginx / certbot） | `make doctor` | 部署完成時 |
 | Outline Wiki 可登入 | OIDC 登入流程成功，首位使用者成為管理員 | 瀏覽器登入測試 | 部署完成時 |
 | SSL 憑證有效 | 憑證有效期 ≥ 60 天，瀏覽器無警告 | `openssl s_client -connect wiki.example.com:443` | 部署完成時 |
 | HTTPS 強制跳轉 | HTTP 80 自動 301 到 HTTPS 443 | `curl -I http://wiki.example.com` | 部署完成時 |
@@ -112,3 +112,23 @@ PostgreSQL 單一 instance 同時服務兩個資料庫（`outline` 和 `keycloak
   - [Let's Encrypt Certbot webroot 模式](https://certbot.eff.org/instructions)
   - `docker-compose.yml` — 服務定義與版本
   - `scripts/setup.sh` — 互動式設定腳本
+
+---
+
+## 決策變更記錄
+
+### 2026-05-10：Certbot 由一次性 CLI 改為常駐 compose service
+
+上表原記「一次性 CLI 工具，非 compose service」。該決策已被推翻——`docker-compose.yml`
+新增了常駐的 `certbot` 服務（12 小時迴圈 `certbot renew` + deploy hook 觸發 nginx reload）。
+理由：一次性 CLI 需要外部排程（cron / systemd timer），那份排程不在 compose 內，
+換機器時容易遺漏，且與「整套部署由 compose 描述」的原則不符。
+相關 commits：`dce8d77`、`3016b95`、`1296ec2`。
+
+### 2026-09-10：所有專案檔案的 bind mount 改為目錄掛載
+
+Docker Desktop / WSL2 重啟後，單檔 bind mount 會以 `exit 127` 失敗、目錄 bind mount 會
+靜默掛成空目錄。後者曾造成一次線上事故（nginx 的 conf.d 掛空 → 沒有 SSL server block
+→ Cloudflare 525）。三處單檔掛載已全部改為目錄掛載，並為 nginx 與 certbot 加上
+healthcheck 讓「掛空」變成可見。詳見 README 故障排除。
+`/var/run/docker.sock` 為刻意保留的例外（由 Docker Desktop 提供，不走 WSL inode 快取）。

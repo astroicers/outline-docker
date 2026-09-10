@@ -96,10 +96,33 @@ jobs:
       - name: Validate Nginx templates
         run: |
           for template in nginx/templates/*.template; do
-            echo "Checking $template..."
             grep -q "server {" "$template" || {
               echo "ERROR: Missing server block in $template"
               exit 1
             }
           done
-          echo "Nginx templates valid"
+
+          # 真的跑一次 nginx -t。只做 grep 的話抓不到 conflicting server name
+          # 這類問題——而那正是「照文件安裝後 80 埠行為錯誤」的成因。
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/conf.d" "$tmp/certs/live/validate.example"
+          sed -e 's/WIKI_DOMAIN/validate.example/g' \
+              -e 's/AUTH_DOMAIN/auth.validate.example/g' \
+              -e 's#http://outline:3000#http://127.0.0.1:3000#' \
+              -e 's#http://keycloak:8080#http://127.0.0.1:8080#' \
+              nginx/templates/outline.conf.template > "$tmp/conf.d/outline.conf"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -keyout "$tmp/certs/live/validate.example/privkey.pem" \
+              -out "$tmp/certs/live/validate.example/fullchain.pem" \
+              -subj "/CN=validate.example" 2>/dev/null
+
+          out=$(docker run --rm \
+              -v "$tmp/conf.d:/etc/nginx/conf.d:ro" \
+              -v "$tmp/certs:/etc/letsencrypt:ro" \
+              nginx:alpine nginx -t 2>&1) || { echo "$out"; exit 1; }
+          if echo "$out" | grep -qiE "conflicting server name|\[warn\]"; then
+            echo "ERROR: nginx -t reported warnings:"
+            echo "$out" | grep -iE "conflicting|warn"
+            exit 1
+          fi
+          echo "Nginx templates valid (nginx -t clean)"

@@ -34,11 +34,13 @@ outline-docker/
 
 | 驗證項目 | 工具 | 說明 |
 |---------|------|------|
-| Shell 腳本語法 | ShellCheck | 檢查 setup.sh 語法和最佳實踐 |
+| Shell 腳本語法 | ShellCheck | 檢查 `scripts/*.sh` 語法和最佳實踐 |
 | YAML 格式 | yamllint | 驗證 docker-compose.yml 格式 |
-| JSON 格式 | jq | 驗證 Keycloak 設定檔 |
-| Nginx 設定 | nginx -t | 驗證設定模板語法 |
+| JSON 格式 | jq | 驗證 Keycloak realm 範本與（若存在）實體檔 |
+| 環境變數範本 | grep | 確認 `.env.example` 含所有必要變數 |
 | Docker Compose | docker compose config | 確認可解析 |
+| Nginx 設定 | `nginx -t`（容器內） | 真正跑一次語法檢查；早期版本只做 `grep -q "server {"` 的結構檢查，抓不到 conflicting server name 這類問題 |
+| 必要檔案 | test -f | 確認關鍵檔案都在
 
 預計執行時間：< 30 秒
 
@@ -92,7 +94,7 @@ outline-docker/
 | 4 | 故意在 `docker-compose.yml` 引入 YAML 語法錯誤後，`make validate` 回傳 exit code 非 0 | 手動引入錯誤並執行 `make validate; echo $?` | ✅ |
 | 5 | `make new-spec` 可執行，並在 `docs/specs/` 下建立以當日日期為前綴的新規格文件 | `make new-spec` | ✅ |
 | 6 | `scripts/validate.sh` 存在且可執行（有 execute 權限） | `test -x scripts/validate.sh && echo ok` | ✅ |
-| 7 | CI 工作流程包含 ShellCheck、yamllint、jq、Docker Compose config、必要檔案檢查、secrets 檢查、Nginx 模板驗證等共 7 個步驟 | `grep -c "name:" .github/workflows/validate.yml` | ✅ |
+| 7 | CI 工作流程包含 ShellCheck、yamllint、jq、Docker Compose config、必要檔案檢查、secrets 檢查、Nginx 模板驗證等 7 個驗證步驟（另有 Checkout 與 Install tools 兩步） | `grep -c '^      - name:' .github/workflows/validate.yml`（期望 9） | ✅ |
 | 8 | `docs/specs/` 目錄存在，且有規格範本 `docs/specs/TEMPLATE.md` | `ls docs/specs/TEMPLATE.md` | ✅ |
 
 ## 風險

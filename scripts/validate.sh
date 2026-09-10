@@ -178,27 +178,58 @@ fi
 # ============================================
 print_header "6. Nginx 設定模板驗證"
 
-# 檢查模板檔案存在
-if [ -f "nginx/templates/outline.conf.template" ]; then
-    # 基本語法檢查：確認有必要的區塊
-    if grep -q "server {" nginx/templates/outline.conf.template && \
-       grep -q "location" nginx/templates/outline.conf.template; then
-        print_pass "nginx/templates/outline.conf.template 結構正確"
-    else
-        print_fail "nginx/templates/outline.conf.template 結構不完整"
+# 結構檢查（不需要 Docker）
+for tpl in nginx/templates/outline.conf.template nginx/templates/outline-temp.conf.template; do
+    if [ ! -f "$tpl" ]; then
+        print_fail "$tpl 不存在"
+        continue
     fi
-else
-    print_fail "nginx/templates/outline.conf.template 不存在"
-fi
+    if grep -q "server {" "$tpl"; then
+        print_pass "$tpl 結構正確"
+    else
+        print_fail "$tpl 結構不完整"
+    fi
+done
 
-if [ -f "nginx/templates/outline-temp.conf.template" ]; then
-    if grep -q "server {" nginx/templates/outline-temp.conf.template; then
-        print_pass "nginx/templates/outline-temp.conf.template 結構正確"
+# 真正的語法檢查：把模板渲染出來後在容器內跑 nginx -t。
+# 早期版本只做上面的 grep，抓不到 conflicting server name 這類問題——
+# 而那正是「照文件安裝後 80 埠行為錯誤」的成因。
+if command -v docker &> /dev/null; then
+    NGINX_TMP=$(mktemp -d)
+    trap 'rm -rf "$NGINX_TMP"' EXIT
+
+    mkdir -p "$NGINX_TMP/conf.d" "$NGINX_TMP/certs/live/validate.example"
+    # upstream 名稱在 CI 沒有 compose 網路可解析，換成 127.0.0.1 才驗得了語法
+    sed -e 's/WIKI_DOMAIN/validate.example/g' \
+        -e 's/AUTH_DOMAIN/auth.validate.example/g' \
+        -e 's#http://outline:3000#http://127.0.0.1:3000#' \
+        -e 's#http://keycloak:8080#http://127.0.0.1:8080#' \
+        nginx/templates/outline.conf.template > "$NGINX_TMP/conf.d/outline.conf"
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+        -keyout "$NGINX_TMP/certs/live/validate.example/privkey.pem" \
+        -out "$NGINX_TMP/certs/live/validate.example/fullchain.pem" \
+        -subj "/CN=validate.example" &> /dev/null
+
+    if NGINX_OUT=$(docker run --rm \
+            -v "$NGINX_TMP/conf.d:/etc/nginx/conf.d:ro" \
+            -v "$NGINX_TMP/certs:/etc/letsencrypt:ro" \
+            nginx:alpine nginx -t 2>&1); then
+        if printf '%s' "$NGINX_OUT" | grep -qiE "conflicting server name|\[warn\]"; then
+            print_fail "nginx -t 通過但有警告"
+            printf '%s\n' "$NGINX_OUT" | grep -iE "conflicting|warn"
+        else
+            print_pass "nginx -t 語法檢查通過且無警告"
+        fi
     else
-        print_fail "nginx/templates/outline-temp.conf.template 結構不完整"
+        print_fail "nginx -t 語法檢查失敗"
+        printf '%s\n' "$NGINX_OUT" | grep -iE "emerg|error" | head -5
     fi
+
+    rm -rf "$NGINX_TMP"
+    trap - EXIT
 else
-    print_fail "nginx/templates/outline-temp.conf.template 不存在"
+    print_skip "nginx -t 語法檢查 (需要 docker)"
 fi
 
 # ============================================
