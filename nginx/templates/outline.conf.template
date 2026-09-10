@@ -1,4 +1,41 @@
+# ============================================================
+# Catch-all：不帶 SNI 或 Host 不認識的請求
+# ------------------------------------------------------------
+# 沒有 default_server 時，nginx 會讓「同一個 listen 位址上的第一個 server block」
+# 自動成為 default——也就是說掃 IP 的人會直接拿到 wiki 的憑證並被 proxy 進 Outline。
+# 在 CDN 代理（橘雲）後面這一點特別要命：只要有人從 CT log 或歷史 DNS 找到 origin IP，
+# 就能 `curl --resolve wiki.example.com:443:<origin-ip>` 完全繞過 CDN 的 WAF、
+# rate limit 與 Bot 防護，直打 Outline 和 Keycloak。
+#
+# ssl_reject_handshake 需要 nginx >= 1.19.4：它讓 nginx 在 TLS 握手階段就拒絕，
+# 不必為了 catch-all 另外準備一張自簽憑證。
+#
+# ⚠ 這個 catch-all 擋掉的是「猜錯 Host / 不帶 SNI」的掃描，**它擋不掉繞過 CDN**：
+# 知道 origin IP 又帶對 SNI 的人，仍然會被正常的 server block 接住。
+#
+# 而且這一層也修不了 XFF 偽造。常見建議是加
+#   set_real_ip_from <Cloudflare 網段>; real_ip_header CF-Connecting-IP;
+# 但在這個部署上那**完全不會生效**：實測 nginx 看到的 $remote_addr 永遠是
+# 172.18.0.1（docker gateway，因為主機在做 port forwarding），不是 Cloudflare 的 IP，
+# 所以 set_real_ip_from 的比對永遠不成立。
+# 改成信任 172.18.0.0/16 也不對——繞過 CDN 直打 origin 的流量同樣從那個 gateway 進來，
+# nginx 分不出「經過 CDN」和「直接來的」，那只會把偽造的 XFF 變成可信。
+#
+# 真正的修法在 nginx 之外：在主機防火牆／路由器只放行 Cloudflare 的 IP 段。
+# 做完之後，才輪得到在這裡設 real_ip。
+server {
+    listen 80 default_server;
+    return 444;
+}
+
+server {
+    listen 443 ssl default_server;
+    ssl_reject_handshake on;
+}
+
+# ============================================================
 # HTTP -> HTTPS 重定向 + Let's Encrypt 驗證
+# ============================================================
 server {
     listen 80;
     server_name WIKI_DOMAIN AUTH_DOMAIN;
@@ -12,17 +49,38 @@ server {
     }
 }
 
-# HTTPS 配置 - Outline Wiki
+# ============================================================
+# HTTPS - Outline Wiki
+# ============================================================
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name WIKI_DOMAIN;
 
     ssl_certificate /etc/letsencrypt/live/WIKI_DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/WIKI_DOMAIN/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
+    # Mozilla Intermediate。舊寫法 HIGH:!aNULL:!MD5 在 OpenSSL 3.x 底下仍包含
+    # 非前向保密的 RSA 金鑰交換套件——私鑰一旦外洩，過去錄下的流量都能被解密。
+    # 注意 TLS 1.3 的套件不受 ssl_ciphers 控制，這行只影響 TLS 1.2。
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    # 有 TLS 1.3 時現行建議是讓客戶端選：它更清楚自己的硬體加速能力
+    # （例如手機偏好 ChaCha20）。
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+
+    # 這裡刻意「不」加任何 add_header 安全標頭。
+    # 實測 Outline 自己就送了這四個，而且 HSTS 比一般建議值更長：
+    #   Strict-Transport-Security: max-age=15552000; includeSubDomains
+    #   X-Frame-Options: SAMEORIGIN
+    #   X-Content-Type-Options: nosniff
+    #   Referrer-Policy: no-referrer
+    # nginx 的 add_header 是「附加」不是「取代」，在這裡加只會產生重複標頭——
+    # 重複的 X-Frame-Options 會讓部分瀏覽器判定為無效值而兩個都不套用，
+    # 而兩個不同值的 Referrer-Policy 是直接的衝突。比不加還糟。
+    # 驗證方式：curl -sSI https://<wiki-domain>/ | grep -ci x-frame-options   # 應為 1
+    # 若日後上游拿掉了這些標頭，才在這裡補上，並同時加 proxy_hide_header。
 
     client_max_body_size 256M;
 
@@ -39,17 +97,25 @@ server {
     }
 }
 
-# HTTPS 配置 - Keycloak
+# ============================================================
+# HTTPS - Keycloak
+# ============================================================
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name AUTH_DOMAIN;
 
+    # 與 wiki 共用同一張憑證：certbot 簽的是涵蓋兩個網域的 SAN 憑證
     ssl_certificate /etc/letsencrypt/live/WIKI_DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/WIKI_DOMAIN/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+
+    # 同上：Keycloak 26 自己送 HSTS(max-age=31536000)、X-Frame-Options、
+    # X-Content-Type-Options、Referrer-Policy，這裡不重複加。
 
     location / {
         proxy_pass http://keycloak:8080;
