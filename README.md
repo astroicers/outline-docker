@@ -221,8 +221,10 @@ outline-docker/
 │   │   ├── TEMPLATE.md                          # 新規格範本（make new-spec 用）
 │   │   ├── 2026-02-12-sdd-testing-framework.md  # 驗證框架規格
 │   │   └── 2026-05-10-certbot-auto-renewal.md   # certbot 自動更新規格
-│   └── plans/                # 實作計劃文件
-│       └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
+│   ├── plans/                # 實作計劃文件
+│   │   └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
+│   └── runbooks/             # 維運程序（一次性或例行的操作手冊）
+│       └── keycloak-admin-hardening.md          # 管理員具名化 + OTP
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
 │   └── import/               # 目錄掛載至 Keycloak 的 import
