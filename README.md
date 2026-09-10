@@ -215,6 +215,10 @@ outline-docker/
 make doctor     # 唯讀：檢查掛載、TLS、憑證，並指出該做什麼
 ```
 
+> 首次部署、憑證還沒簽下來之前，生效的是 HTTP-only 的暫時設定（只 `listen 80`），
+> 此時 nginx 會顯示 **unhealthy**，`make doctor` 的 TLS 項目也會失敗——這是正常的。
+> 換上 SSL 設定（安裝步驟 5）之後就會轉綠。
+
 ### 服務狀態檢查
 
 ```bash
@@ -261,9 +265,15 @@ make recover     # docker compose down + up，重建容器以重新解析掛載
 必須 down/up 重建。若 `make recover` 後掛載仍是空的，代表 Docker Desktop 的
 bind-mount 快取本身壞了，需在 Windows 端重啟 Docker Desktop 再跑一次。
 
-> 本專案已把所有**單檔** bind mount 改為目錄掛載（`scripts/initdb/`、
-> `keycloak/import/`、`/opt/scripts`），消除 exit 127 那一類故障；
-> nginx 另有 healthcheck 會讓「掛空」在 `docker compose ps` 顯示為 unhealthy。
+> 本專案已把所有**專案檔案**的單檔 bind mount 改為目錄掛載（`scripts/initdb/`、
+> `keycloak/import/`、`/opt/scripts`），消除 exit 127 那一類故障。
+> `/var/run/docker.sock` 是刻意的例外——它由 Docker Desktop 提供，不走 WSL inode 快取。
+>
+> **要留意代價**：單檔掛載壞掉時會停機（exit 127），是個大聲的警報；改成目錄掛載後
+> 同一個事件變成**安靜地掛空**。因此 nginx 與 certbot 都加了 healthcheck 把它變回可見
+> （`docker compose ps` 顯示 unhealthy）。certbot 那條特別重要：它的 hook 掛空時，
+> 憑證會照常更新但 nginx 永遠不 reload，繼續送舊憑證直到過期才爆同一個 525。
+> healthcheck **只負責可見化，不會自動重啟**——看到 unhealthy 請跑 `make recover`。
 
 ### 無法連接網站
 

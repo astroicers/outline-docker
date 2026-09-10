@@ -39,13 +39,19 @@ print_warn() {
     echo -e "${YELLOW}○${NC} $1"
 }
 
-# 從 .env 取得網域（沒有就用 URL 推導，再不然給預設值）
-WIKI_DOMAIN=""
-AUTH_DOMAIN=""
-if [ -f .env ]; then
-    WIKI_DOMAIN=$(grep -E '^URL=' .env | head -1 | sed -e 's#^URL=https\?://##' -e 's#/.*##')
-    AUTH_DOMAIN=$(grep -E '^AUTH_DOMAIN=' .env | head -1 | cut -d= -f2-)
-fi
+# 從 .env 取得網域。刻意不 source .env（那會執行任意內容，且 .env 含密鑰）。
+# 需容忍：值帶引號、CRLF 行尾（WSL 常見）、URL 帶 port 或路徑。
+env_value() {
+    [ -f .env ] || return 0
+    grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'"
+}
+strip_to_host() {
+    # https://host:8443/path -> host
+    printf '%s' "$1" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*##'
+}
+
+WIKI_DOMAIN=$(strip_to_host "$(env_value URL)")
+AUTH_DOMAIN=$(strip_to_host "$(env_value AUTH_DOMAIN)")
 [ -n "$WIKI_DOMAIN" ] || WIKI_DOMAIN="wiki.example.com"
 [ -n "$AUTH_DOMAIN" ] || AUTH_DOMAIN="auth.example.com"
 
@@ -159,24 +165,23 @@ done
 # ============================================
 print_header "5. 憑證到期日"
 
-cert_end=$(echo | openssl s_client -connect 127.0.0.1:443 -servername "$WIKI_DOMAIN" 2>/dev/null \
-           | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
-if [ -n "$cert_end" ]; then
-    end_ts=$(date -d "$cert_end" +%s 2>/dev/null || echo "")
-    if [ -n "$end_ts" ]; then
-        days=$(( (end_ts - $(date +%s)) / 86400 ))
-        if [ "$days" -lt 0 ]; then
-            print_fail "origin 憑證已過期（$cert_end）"
-        elif [ "$days" -lt 21 ]; then
-            print_fail "origin 憑證剩 $days 天到期（$cert_end）← 自動更新可能沒在運作"
-        else
-            print_pass "origin 憑證剩 $days 天到期（$cert_end）"
-        fi
-    else
-        print_pass "origin 憑證到期：$cert_end"
-    fi
-else
+# 用 openssl -checkend 判斷，不依賴 GNU date（BSD/macOS 的 date 沒有 -d）。
+# 解析不出來一律當失敗，不可 fail-open：這支工具的用途正是抓靜默失效。
+cert_pem=$(echo | openssl s_client -connect 127.0.0.1:443 -servername "$WIKI_DOMAIN" 2>/dev/null \
+           | openssl x509 2>/dev/null)
+
+if [ -z "$cert_pem" ]; then
     print_fail "讀不到 origin 憑證（443 上沒有可用的 TLS）"
+else
+    cert_end=$(printf '%s\n' "$cert_pem" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+    [ -n "$cert_end" ] || cert_end="(到期日解析失敗)"
+    if ! printf '%s\n' "$cert_pem" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+        print_fail "origin 憑證已過期（$cert_end）"
+    elif ! printf '%s\n' "$cert_pem" | openssl x509 -noout -checkend 1814400 >/dev/null 2>&1; then
+        print_fail "origin 憑證 21 天內到期（$cert_end）← 自動更新可能沒在運作"
+    else
+        print_pass "origin 憑證有效，21 天內不會到期（$cert_end）"
+    fi
 fi
 
 # ============================================

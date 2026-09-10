@@ -67,7 +67,7 @@ docker compose restart [service]        # Restart service
 - First Keycloak user to login becomes Outline admin
 - Let's Encrypt certificates expire in 90 days
 - WebSocket support configured for real-time collaboration
-- All bind mounts are **directory** mounts, never single-file: single-file bind mounts fail with `exit 127` after a Docker Desktop / WSL2 restart (see README 故障排除)
+- All bind mounts **of project files** are **directory** mounts, never single-file: single-file bind mounts fail with `exit 127` after a Docker Desktop / WSL2 restart (see README 故障排除). `/var/run/docker.sock` is a deliberate exception — it is provided by Docker Desktop and does not go through the WSL inode cache
 - Rate limiting: 1000 requests per 60 seconds
 - Max upload size: 256MB
 

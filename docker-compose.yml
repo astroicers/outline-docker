@@ -85,7 +85,18 @@ services:
       - ./nginx/www:/var/www/certbot
       # 掛在 /opt/scripts（非 /etc/letsencrypt 底下）：避免巢狀 bind mount
       - ./scripts:/opt/scripts:ro
+      # docker.sock 是刻意保留的單檔掛載：它由 Docker Desktop 提供，
+      # 不走 WSL host inode 快取，沒有上述失效模式。
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # 單檔改目錄後，掛載失效由「exit 127 停機」變成「靜默掛空」。
+    # certbot 是潛伏期最長的一條：hook 掛空 → 憑證更新了但 nginx 永不 reload
+    # → 繼續送舊憑證直到過期，中間毫無告警。這裡把它變成可見。
+    healthcheck:
+      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       - nginx
     restart: unless-stopped

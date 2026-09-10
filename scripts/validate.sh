@@ -44,7 +44,7 @@ print_header "Outline Docker 專案驗證"
 print_header "1. ShellCheck - Shell 腳本檢查"
 
 if command -v shellcheck &> /dev/null; then
-    if shellcheck scripts/setup.sh scripts/validate.sh 2>/dev/null; then
+    if shellcheck scripts/*.sh 2>/dev/null; then
         print_pass "Shell 腳本語法正確"
     else
         print_fail "Shell 腳本有問題，請執行 shellcheck scripts/*.sh 查看詳情"

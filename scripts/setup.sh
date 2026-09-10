@@ -162,7 +162,7 @@ EOF
 
 # 建立必要目錄
 echo "正在建立目錄..."
-mkdir -p data nginx/certs nginx/www
+mkdir -p data nginx/certs nginx/www nginx/conf.d
 chmod 777 data
 
 # 使用臨時 Nginx 設定
@@ -187,9 +187,11 @@ echo "4. 取得 SSL 憑證："
 echo "   docker run --rm \\"
 echo "     -v \$(pwd)/nginx/certs:/etc/letsencrypt \\"
 echo "     -v \$(pwd)/nginx/www:/var/www/certbot \\"
+echo "     -v \$(pwd)/scripts:/opt/scripts:ro \\"
 echo "     certbot/certbot certonly --webroot \\"
 echo "     -w /var/www/certbot \\"
 echo "     -d ${WIKI_DOMAIN} -d ${AUTH_DOMAIN} \\"
+echo "     --deploy-hook /opt/scripts/deploy-hook.sh \\"
 echo "     --email ${EMAIL} --agree-tos --non-interactive"
 echo ""
 echo "5. 切換到 SSL 設定並啟動所有服務："
