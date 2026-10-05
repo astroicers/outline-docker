@@ -190,7 +190,7 @@ make doctor             # 順帶檢查憑證是否即將到期、hook 是否還�
 
 > 不要另外架 cron 或手動跑 `docker run ... certbot renew`。理由有兩個：
 > 一是會變成第二套續期路徑，重複續期會撞上 Let's Encrypt 的速率限制；
-> 二是那樣的 `docker run` 沒有掛 `/opt/scripts` 也沒有掛 docker socket，
+> 二是那樣的 `docker run` 沒有掛 `/opt/scripts`，也不在 nginx 的 PID namespace 裡，
 > deploy hook 一定失敗——結果是**憑證換了但 nginx 一直送舊的**，
 > 直到舊憑證過期才爆出 SSL 錯誤，中間毫無告警。
 
@@ -221,8 +221,10 @@ outline-docker/
 │   │   ├── TEMPLATE.md                          # 新規格範本（make new-spec 用）
 │   │   ├── 2026-02-12-sdd-testing-framework.md  # 驗證框架規格
 │   │   └── 2026-05-10-certbot-auto-renewal.md   # certbot 自動更新規格
-│   └── plans/                # 實作計劃文件
-│       └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
+│   ├── plans/                # 實作計劃文件
+│   │   └── 2026-05-10-certbot-auto-renew.md     # certbot 自動更新實作計劃
+│   └── runbooks/             # 維運程序（一次性或例行的操作手冊）
+│       └── keycloak-admin-hardening.md          # 管理員具名化 + OTP
 ├── data/                     # Outline 檔案儲存
 ├── keycloak/
 │   └── import/               # 目錄掛載至 Keycloak 的 import
@@ -307,9 +309,37 @@ make recover     # docker compose down + up，重建容器以重新解析掛載
 必須 down/up 重建。若 `make recover` 後掛載仍是空的，代表 Docker Desktop 的
 bind-mount 快取本身壞了，需在 Windows 端重啟 Docker Desktop 再跑一次。
 
+#### 自動復原守護
+
+這個故障發生過兩次（2026-09-10、2026-10-02）。第二次時 healthcheck 連續失敗 8140 次、
+**第一時間就抓到了**，但沒有任何機制通知任何人，於是站台掛了 67.8 小時才被發現。
+可見 ≠ 有人看見，所以補上會自己動手的那一段：
+
+```bash
+make watchdog-install     # 裝上 cron（@reboot + 每 5 分鐘）
+make watchdog-status      # 看是否已安裝、最近觸發記錄、本小時復原次數
+make watchdog-uninstall   # 移除
+```
+
+守護只在**三個條件同時成立**時才動作：容器正在執行、host 端設定檔存在、
+容器內 `conf.d` 卻是空的。少任何一條都不動——特別是第一條，確保你自己
+`make down` 停機時它不會把服務硬拉起來。
+
+另有兩道安全機制：`flock` 互斥避免重疊執行；**一小時最多復原 2 次**，
+超過就停手只記錄告警（否則 Docker Desktop 快取整個壞掉時會變成每 5 分鐘 down/up 的無限迴圈）。
+
+記錄在 `~/.outline-docker-watchdog.log` 與 journald（`journalctl -t outline-watchdog`）。
+`make doctor` 若發現 24 小時內曾自動復原過會特別提示——否則自動復原會變成另一種靜默。
+
+**要推播到手機**：這台機器沒有 `notify-send` / `mail` / `sendmail`，所以預設只有本機記錄。
+在 `~/.outline-docker-watchdog.conf` 填一行 `WEBHOOK_URL=<你的 Discord / Slack / ntfy URL>`
+就會改為 POST 通知，不需要改腳本。
+
 > 本專案已把所有**專案檔案**的單檔 bind mount 改為目錄掛載（`scripts/initdb/`、
 > `keycloak/import/`、`/opt/scripts`），消除 exit 127 那一類故障。
-> `/var/run/docker.sock` 是刻意的例外——它由 Docker Desktop 提供，不走 WSL inode 快取。
+> certbot 與 nginx 共用 PID namespace（`pid: "service:nginx"`），deploy hook 靠 `kill -HUP 1`
+> 通知 nginx reload，因此**不需要**掛 `/var/run/docker.sock`。
+> 代價是 nginx 一旦重建，certbot 也要跟著重建（`docker compose up -d certbot`）。
 >
 > **要留意代價**：單檔掛載壞掉時會停機（exit 127），是個大聲的警報；改成目錄掛載後
 > 同一個事件變成**安靜地掛空**。因此 nginx 與 certbot 都加了 healthcheck 把它變回可見

@@ -82,23 +82,26 @@ services:
 
   certbot:
     image: certbot/certbot
-    entrypoint: /bin/sh -c "apk add --no-cache curl -q && trap exit TERM; while :; do certbot renew --deploy-hook /opt/scripts/deploy-hook.sh; sleep 12h & wait $${!}; done"
+    # 不再 apk add curl：那是每次啟動都要連 Alpine CDN 的執行期供應鏈路徑，
+    # 一旦失敗，&& 串接會讓整個 entrypoint 掛掉、容器無限重啟、憑證再也不會續期。
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --deploy-hook /opt/scripts/deploy-hook.sh; sleep 12h & wait $${!}; done"
     volumes:
       - ./nginx/certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot
       # 掛在 /opt/scripts（非 /etc/letsencrypt 底下）：避免巢狀 bind mount
       - ./scripts:/opt/scripts:ro
-      # docker.sock 是刻意保留的單檔掛載：它由 Docker Desktop 提供，
-      # 不走 WSL host inode 快取，沒有上述失效模式。
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # 與 nginx 共用 PID namespace，好讓 deploy hook 能直接 signal nginx master
+    # （在該 namespace 內 nginx master 就是 PID 1）。
+    # 這取代了原本掛 /var/run/docker.sock 的做法——那個 :ro 沒有安全意義，
+    # 它只讓 socket 檔案唯讀，透過它送出的 Docker API 呼叫仍是完全讀寫的，
+    # 等於把整台主機的 root 押在 certbot 容器上。
+    # 代價：nginx 一旦重建，certbot 也必須跟著重建（PID namespace 的目標沒了）。
+    pid: "service:nginx"
     # 單檔改目錄後，掛載失效由「exit 127 停機」變成「靜默掛空」。
     # certbot 是潛伏期最長的一條：hook 掛空 → 憑證更新了但 nginx 永不 reload
     # → 繼續送舊憑證直到過期，中間毫無告警。這裡把它變成可見。
     healthcheck:
-      # 同時檢查 curl：entrypoint 每次啟動都 apk add curl，那一步失敗時
-      # hook 檔案還在（所以只檢查檔案抓不到），但容器會進入無限重啟迴圈、
-      # 憑證再也不會續期。
-      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh && command -v curl >/dev/null"]
+      test: ["CMD-SHELL", "test -x /opt/scripts/deploy-hook.sh"]
       interval: 60s
       timeout: 5s
       retries: 3

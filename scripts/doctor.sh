@@ -185,6 +185,24 @@ else
 fi
 
 # ============================================
+# 6. 守護是否曾自動出手
+# ============================================
+# 自動復原若不說一聲，就變成另一種靜默：系統自己修好了，但沒有人知道它壞過。
+WD_LOG="$HOME/.outline-docker-watchdog.log"
+if [ -f "$WD_LOG" ]; then
+    since=$(date -d '24 hours ago' -Iseconds 2>/dev/null || echo "")
+    if [ -n "$since" ]; then
+        recoveries=$(awk -v s="$since" '$1 > s && /自動復原成功/' "$WD_LOG" | wc -l)
+        failures=$(awk -v s="$since" '$1 > s && /\[ERROR\]/' "$WD_LOG" | wc -l)
+        if [ "$recoveries" -gt 0 ] || [ "$failures" -gt 0 ]; then
+            print_header "6. 守護活動（最近 24 小時）"
+            [ "$recoveries" -gt 0 ] && print_warn "自動復原過 $recoveries 次——掛載失效仍在發生，請看 make watchdog-status"
+            [ "$failures" -gt 0 ] && print_warn "守護記錄了 $failures 筆錯誤"
+        fi
+    fi
+fi
+
+# ============================================
 # 總結
 # ============================================
 print_header "診斷結果"
