@@ -2,7 +2,8 @@
 # 使用方式: make <target>
 
 .PHONY: help validate validate-quick setup up down restart logs logs-outline logs-keycloak \
-        logs-nginx ps db-shell backup doctor recover cert-renew cert-renew-force cert-status new-spec
+        logs-nginx ps db-shell backup doctor recover watchdog-install watchdog-status \
+        watchdog-uninstall cert-renew cert-renew-force cert-status new-spec
 
 # 預設目標
 help:
@@ -20,6 +21,9 @@ help:
 	@echo "  make ps             查看服務狀態"
 	@echo "  make doctor         健康診斷（掛載／TLS／憑證，唯讀）"
 	@echo "  make recover        重建容器修復失效的 bind mount，再跑 doctor"
+	@echo "  make watchdog-install   安裝自動復原守護（cron）"
+	@echo "  make watchdog-status    查看守護狀態與最近觸發記錄"
+	@echo "  make watchdog-uninstall 移除守護"
 	@echo "  make logs           查看日誌 (全部)"
 	@echo "  make logs-outline   查看 Outline 日誌"
 	@echo "  make logs-keycloak  查看 Keycloak 日誌"
@@ -79,6 +83,34 @@ recover:
 
 doctor:
 	@./scripts/doctor.sh
+
+# 自動復原守護：healthcheck 看得到故障，但不會動手。2026-10-02 那次就這樣
+# 掛了 67.8 小時沒人發現，所以補上「動手」這一段。
+WATCHDOG := $(CURDIR)/scripts/watchdog.sh
+
+watchdog-install:
+	@if crontab -l 2>/dev/null | grep -qF "$(WATCHDOG)"; then \
+		echo "守護已安裝，未重複加入"; \
+	else \
+		( crontab -l 2>/dev/null; \
+		  echo "@reboot sleep 60 && $(WATCHDOG)"; \
+		  echo "*/5 * * * * $(WATCHDOG)" ) | crontab -; \
+		echo "已安裝：@reboot 與每 5 分鐘各一條"; \
+	fi
+	@$(MAKE) --no-print-directory watchdog-status
+
+watchdog-uninstall:
+	@crontab -l 2>/dev/null | grep -vF "$(WATCHDOG)" | crontab - && echo "守護已移除"
+
+watchdog-status:
+	@echo "--- crontab ---"
+	@crontab -l 2>/dev/null | grep -F "$(WATCHDOG)" || echo "  未安裝（跑 make watchdog-install）"
+	@echo "--- 最近 5 筆記錄 ---"
+	@tail -5 $$HOME/.outline-docker-watchdog.log 2>/dev/null | sed 's/^/  /' || echo "  尚無記錄"
+	@echo "--- 本小時已自動復原次數 ---"
+	@if [ -f $$HOME/.outline-docker-watchdog.state ]; then \
+		awk -v n="$$(date +%s)" '$$1 > n-3600' $$HOME/.outline-docker-watchdog.state | wc -l | sed 's/^/  /'; \
+	else echo "  0"; fi
 
 ps:
 	docker compose ps

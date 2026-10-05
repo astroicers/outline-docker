@@ -82,6 +82,11 @@ competing for port 80 (and the temp one wins the glob order).
 - WebSocket support configured for real-time collaboration
 - All bind mounts are **directory** mounts, never single-file: single-file bind mounts fail with
   `exit 127` after a Docker Desktop / WSL2 restart (see README 故障排除)
+- A cron watchdog (`scripts/watchdog.sh`, installed via `make watchdog-install`) auto-recovers the
+  bind-mount decoupling. It fires only when containers are running AND the host config exists AND
+  the container's `conf.d` is empty, with a 2-per-hour rate limit. This exists because the failure
+  happened twice (2026-09-10, 2026-10-02) and the second time the healthchecks caught it
+  immediately but nothing told anyone — the site stayed down 67.8 hours
 - The certbot container shares nginx's PID namespace (`pid: "service:nginx"`) so the deploy hook
   can `kill -HUP 1`. It deliberately does **not** mount `/var/run/docker.sock` — that would hand
   the whole host's root to certbot, and the `:ro` on such a mount buys nothing (it only makes the
